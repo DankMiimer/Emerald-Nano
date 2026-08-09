@@ -1,0 +1,715 @@
+#include "voxel_renderer.h"
+
+#ifdef PLATFORM_SDL2
+#ifdef NATIVE_LINUX
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "global.h"
+#include "fieldmap.h"
+#include "palette.h"
+#include "decompress.h"
+#include <GL/gl.h>
+#include <SDL2/SDL.h>
+#include "voxel_world.h"
+#include "voxel_camera.h"
+#include "voxel_mesh.h"
+#include "field_player_avatar.h"
+#include "constants/global.h"
+
+// Will be defined in sdl2.c
+extern SDL_Window *sdlWindow;
+
+static GLuint sVoxelAtlasTex = 0;
+static const struct MapLayout *sLastMapLayout = NULL;
+
+// -----------------------------------------------------------------------
+//  Atlas builder
+// -----------------------------------------------------------------------
+static void BuildVoxelAtlas(void)
+{
+    if (!gMapHeader.mapLayout) return;
+
+    uint32_t *atlasPixels = malloc(512 * 512 * 4);
+    if (!atlasPixels) return;
+    memset(atlasPixels, 0, 512 * 512 * 4);
+
+    const struct MapLayout *layout = gMapHeader.mapLayout;
+
+    uint8_t *primTiles = calloc(1, 512 * 32);
+    uint8_t *secTiles  = calloc(1, 512 * 32);
+
+    if (layout->primaryTileset) {
+        if (layout->primaryTileset->isCompressed)
+            LZDecompressWram(layout->primaryTileset->tiles, primTiles);
+        else
+            memcpy(primTiles, layout->primaryTileset->tiles, 512 * 32);
+    }
+
+    if (layout->secondaryTileset) {
+        if (layout->secondaryTileset->isCompressed)
+            LZDecompressWram(layout->secondaryTileset->tiles, secTiles);
+        else
+            memcpy(secTiles, layout->secondaryTileset->tiles, 512 * 32);
+    }
+
+    for (int m = 0; m < 1024; m++) {
+        const u16 *metatileData = NULL;
+        if (m < 512) {
+            if (layout->primaryTileset && layout->primaryTileset->metatiles)
+                metatileData = layout->primaryTileset->metatiles + (m * 8);
+        } else {
+            if (layout->secondaryTileset && layout->secondaryTileset->metatiles)
+                metatileData = layout->secondaryTileset->metatiles + ((m - 512) * 8);
+        }
+
+        if (metatileData) {
+            uint32_t mtPixels[256];
+            memset(mtPixels, 0, sizeof(mtPixels));
+
+            for (int layer = 0; layer < 2; layer++) {
+                for (int i = 0; i < 4; i++) {
+                    int dstOffsetX = (i % 2) * 8;
+                    int dstOffsetY = (i / 2) * 8;
+                    u16 entry = metatileData[(layer * 4) + i];
+
+                    uint32_t tileId   = entry & 0x3FF;
+                    uint32_t paletteId = (entry >> 12) & 0xF;
+                    bool flipX = (entry >> 10) & 1;
+                    bool flipY = (entry >> 11) & 1;
+
+                    for (int py = 0; py < 8; py++) {
+                        for (int px = 0; px < 8; px++) {
+                            int srcX = flipX ? (7 - px) : px;
+                            int srcY = flipY ? (7 - py) : py;
+
+                            uint8_t pixelByte = 0;
+                            if (tileId < 512)
+                                pixelByte = primTiles[tileId * 32 + srcY * 4 + srcX / 2];
+                            else
+                                pixelByte = secTiles[(tileId - 512) * 32 + srcY * 4 + srcX / 2];
+
+                            uint8_t colorIdx = (srcX % 2 == 0) ? (pixelByte & 0xF) : (pixelByte >> 4);
+
+                            if (layer == 0 || colorIdx != 0) {
+                                uint16_t bgr15 = 0;
+                                if (layer == 0 && colorIdx == 0) {
+                                    if (layout->primaryTileset && layout->primaryTileset->palettes)
+                                        bgr15 = layout->primaryTileset->palettes[0][0];
+                                } else {
+                                    if (paletteId < 6) {
+                                        if (layout->primaryTileset && layout->primaryTileset->palettes)
+                                            bgr15 = layout->primaryTileset->palettes[paletteId][colorIdx];
+                                    } else {
+                                        if (layout->secondaryTileset && layout->secondaryTileset->palettes)
+                                            bgr15 = layout->secondaryTileset->palettes[paletteId][colorIdx];
+                                    }
+                                }
+
+                                uint8_t r = ((bgr15 >>  0) & 0x1F) << 3;
+                                uint8_t g = ((bgr15 >>  5) & 0x1F) << 3;
+                                uint8_t b = ((bgr15 >> 10) & 0x1F) << 3;
+                                uint32_t rgba = r | (g << 8) | (b << 16) | (255u << 24);
+                                mtPixels[(dstOffsetY + py) * 16 + (dstOffsetX + px)] = rgba;
+                            }
+                        }
+                    }
+                }
+            }
+
+            int atlasX = (m % 32) * 16;
+            int atlasY = (m / 32) * 16;
+            for (int py = 0; py < 16; py++)
+                for (int px = 0; px < 16; px++)
+                    atlasPixels[(atlasY + py) * 512 + (atlasX + px)] = mtPixels[py * 16 + px];
+        }
+    }
+
+    // Force all pixels fully opaque for now (debug)
+    for (int i = 0; i < 512 * 512; i++)
+        atlasPixels[i] |= (255u << 24);
+
+    if (sVoxelAtlasTex == 0)
+        glGenTextures(1, &sVoxelAtlasTex);
+
+    glBindTexture(GL_TEXTURE_2D, sVoxelAtlasTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 512, 512, 0, GL_RGBA, GL_UNSIGNED_BYTE, atlasPixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    printf("[Voxel] atlas texture id: %u, GL error: %d\n", sVoxelAtlasTex, glGetError());
+
+    free(primTiles);
+    free(secTiles);
+    free(atlasPixels);
+    sLastMapLayout = layout;
+}
+
+// -----------------------------------------------------------------------
+//  Sprite texture decoder (kept as-is from previous milestone)
+// -----------------------------------------------------------------------
+static void GetSpriteDimensions(u8 shape, u8 size, int *w, int *h)
+{
+    if (shape == ST_OAM_SQUARE) {
+        if      (size == 0) { *w = 8;  *h = 8;  }
+        else if (size == 1) { *w = 16; *h = 16; }
+        else if (size == 2) { *w = 32; *h = 32; }
+        else                { *w = 64; *h = 64; }
+    } else if (shape == ST_OAM_H_RECTANGLE) {
+        if      (size == 0) { *w = 16; *h = 8;  }
+        else if (size == 1) { *w = 32; *h = 8;  }
+        else if (size == 2) { *w = 32; *h = 16; }
+        else                { *w = 64; *h = 32; }
+    } else if (shape == ST_OAM_V_RECTANGLE) {
+        if      (size == 0) { *w = 8;  *h = 16; }
+        else if (size == 1) { *w = 8;  *h = 32; }
+        else if (size == 2) { *w = 16; *h = 32; }
+        else                { *w = 32; *h = 64; }
+    } else {
+        *w = 16; *h = 32;
+    }
+}
+
+static GLuint sObjectEventTex[16] = {0};
+static int    sObjectEventW[16] = {16};
+static int    sObjectEventH[16] = {32};
+
+static void UpdateObjectSpriteTexture(struct Sprite *sprite, GLuint *texOut, int *wOut, int *hOut)
+{
+    if (!sprite) return;
+
+    int w, h;
+    GetSpriteDimensions(sprite->oam.shape, sprite->oam.size, &w, &h);
+    if (wOut) *wOut = w;
+    if (hOut) *hOut = h;
+
+    u8 *pixels = malloc(w * h * 4);
+    if (!pixels) return;
+
+    u16 tileBase = sprite->oam.tileNum;
+    u16 palBase  = sprite->oam.paletteNum;
+
+    extern unsigned char PLTT[];
+    u16 *palData = (u16 *)(PLTT + 0x200 + palBase * 32);
+
+    extern unsigned char VRAM_[];
+    u8 *vramBase = VRAM_ + 0x10000;
+
+    int tilesX = w / 8;
+    int tilesY = h / 8;
+
+    // H/V flip from OAM attribute bits (not matrixNum in normal mode)
+    // In non-affine mode, bit 28 of attr0+attr1 encoding: we use the OamData struct fields
+    bool hFlip = false;
+    bool vFlip = false;
+    if (sprite->oam.affineMode == 0) {
+        // matrixNum field is repurposed for flip flags in non-affine mode
+        hFlip = (sprite->oam.matrixNum & 0x08) != 0;
+        vFlip = (sprite->oam.matrixNum & 0x10) != 0;
+    }
+
+    for (int ty = 0; ty < tilesY; ty++) {
+        for (int tx = 0; tx < tilesX; tx++) {
+            int tileIdx   = ty * tilesX + tx;
+            u8 *tileData  = vramBase + (tileBase + tileIdx) * 32;
+
+            for (int py = 0; py < 8; py++) {
+                for (int px = 0; px < 8; px++) {
+                    u8 colorIdx = tileData[(py * 8 + px) / 2];
+                    colorIdx = (px % 2 == 0) ? (colorIdx & 0x0F) : (colorIdx >> 4);
+
+                    int outX = tx * 8 + px;
+                    int outY = ty * 8 + py;
+                    if (hFlip) outX = w - 1 - outX;
+                    if (vFlip) outY = h - 1 - outY;
+
+                    u8 *outPixel = pixels + (outY * w + outX) * 4;
+
+                    if (colorIdx == 0) {
+                        outPixel[0] = outPixel[1] = outPixel[2] = outPixel[3] = 0;
+                    } else {
+                        u16 color15 = palData[colorIdx];
+                        outPixel[0] = (color15 & 0x1F) * 255 / 31;
+                        outPixel[1] = ((color15 >> 5) & 0x1F) * 255 / 31;
+                        outPixel[2] = ((color15 >> 10) & 0x1F) * 255 / 31;
+                        outPixel[3] = 255;
+                    }
+                }
+            }
+        }
+    }
+
+    if (*texOut == 0)
+        glGenTextures(1, texOut);
+
+    glBindTexture(GL_TEXTURE_2D, *texOut);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    free(pixels);
+}
+
+//    sprite->data[3] (sDirection) → movement direction
+//    sprite->data[4] (sSpeed)    → speed class (0=16fr, 1=8fr, 2=6fr, 3=4fr, 4=2fr)
+//    sprite->data[5] (sTimer)    → frames elapsed in current step (0..stepLen-1)
+//
+//  World coordinate system:
+//    voxel X = map-local X  (east = +X)
+//    voxel Y = height
+//    voxel Z = map-local Y  (south = +Z)
+//
+//  NOTE: sprite->x/y/x2/y2 are SCREEN-SPACE values that include camera offset;
+//  they must NOT be used to determine world position.
+// -----------------------------------------------------------------------
+
+// Step durations matching sStepTimes[] in event_object_movement.c
+static const int sVoxelStepTimes[] = { 16, 8, 6, 4, 2 };
+
+// Returns the sub-tile interpolation factor t in [0.0, 1.0].
+// t==0 means at previous tile, t==1 means at current tile.
+static float GetMovementProgress(const struct ObjectEvent *obj, const struct Sprite *sprite)
+{
+    // If not currently taking a step, the sprite is idle at currentCoords.
+    // After a step completes, ShiftStillObjectEventCoords sets prev==current,
+    // so lerp(0..1) between identical coords is still correct.
+    if (!obj->singleMovementActive && !obj->heldMovementActive)
+        return 1.0f;
+
+    // data[4] = sSpeed, data[5] = sTimer
+    int speed = (int)(u16)sprite->data[4];
+    int timer = (int)(u16)sprite->data[5];
+
+    if (speed < 0 || speed > 4)
+        return 1.0f;
+
+    int stepLen = sVoxelStepTimes[speed];
+    if (stepLen <= 0)
+        return 1.0f;
+
+    // timer was already incremented AFTER executing the step,
+    // so at the start of a step timer==0 and at completion timer==stepLen.
+    float t = (float)timer / (float)stepLen;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    return t;
+}
+
+// Get the object's interpolated world position.
+// Returns true if position is valid.
+static bool GetVoxelObjectWorldPos(struct ObjectEvent *obj, float *outX, float *outZ)
+{
+    if (!obj || !obj->active) return false;
+    struct Sprite *sprite = &gSprites[obj->spriteId];
+
+    // Convert backup-layout coords to map-local coords
+    float prevX = (float)(obj->previousCoords.x - MAP_OFFSET);
+    float prevZ = (float)(obj->previousCoords.y - MAP_OFFSET);
+    float curX  = (float)(obj->currentCoords.x  - MAP_OFFSET);
+    float curZ  = (float)(obj->currentCoords.y  - MAP_OFFSET);
+
+    float t = GetMovementProgress(obj, sprite);
+
+    *outX = prevX + (curX - prevX) * t;
+    *outZ = prevZ + (curZ - prevZ) * t;
+    return true;
+}
+
+// -----------------------------------------------------------------------
+//  Map-change detection
+// -----------------------------------------------------------------------
+static uint16_t sLastMapLayoutId = 0xFFFF;
+static u8 sLastMapGroup = 0xFF;
+static u8 sLastMapNum   = 0xFF;
+static bool sNeedCameraSnap = true;
+
+static bool DetectMapChange(void)
+{
+    uint16_t currentLayoutId = gMapHeader.mapLayoutId;
+    u8 currentGroup = gSaveBlock1Ptr->location.mapGroup;
+    u8 currentNum   = gSaveBlock1Ptr->location.mapNum;
+
+    if (currentLayoutId != sLastMapLayoutId ||
+        currentGroup != sLastMapGroup ||
+        currentNum   != sLastMapNum)
+    {
+        sLastMapLayoutId = currentLayoutId;
+        sLastMapGroup    = currentGroup;
+        sLastMapNum      = currentNum;
+        return true;
+    }
+    return false;
+}
+
+// -----------------------------------------------------------------------
+//  Camera
+// -----------------------------------------------------------------------
+static VoxelCamera sCamera;
+
+// -----------------------------------------------------------------------
+//  Main render function
+// -----------------------------------------------------------------------
+static bool sPrintedOnce = false;
+static bool gVoxelDebugFlatMode = false;
+static bool gF3WasPressed = false;
+
+void VoxelRenderer_RenderFrame(void)
+{
+    const Uint8 *keys = SDL_GetKeyboardState(NULL);
+    if (keys[SDL_SCANCODE_F3]) {
+        if (!gF3WasPressed) {
+            gVoxelDebugFlatMode = !gVoxelDebugFlatMode;
+            gF3WasPressed = true;
+        }
+    } else {
+        gF3WasPressed = false;
+    }
+
+    // ---- 2D FALLBACK (title screen, battle, menus) ----
+    if (!VoxelWorld_IsMapAvailable()) {
+        extern void DrawFrame(uint16_t *pixels);
+
+        static uint16_t gbaImage[240 * 160];
+        static uint32_t image[240 * 160];
+        static int sFallbackFrames = 0;
+        sFallbackFrames++;
+
+        memset(gbaImage, 0, sizeof(gbaImage));
+        DrawFrame(gbaImage);
+
+        for (int i = 0; i < 240 * 160; i++) {
+            uint16_t color = gbaImage[i];
+            uint32_t r = (color & 0x1F) * 255 / 31;
+            uint32_t g = ((color >> 5) & 0x1F) * 255 / 31;
+            uint32_t b = ((color >> 10) & 0x1F) * 255 / 31;
+            image[i] = r | (g << 8) | (b << 16) | (255u << 24);
+        }
+
+        REG_VCOUNT = 161;
+
+        static GLuint sScreenTex = 0;
+        if (!sScreenTex) {
+            glGenTextures(1, &sScreenTex);
+            glBindTexture(GL_TEXTURE_2D, sScreenTex);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        }
+
+        int winW, winH;
+        SDL_GL_GetDrawableSize(sdlWindow, &winW, &winH);
+        glViewport(0, 0, winW, winH);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+        glDisable(GL_ALPHA_TEST);
+        glEnable(GL_TEXTURE_2D);
+
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(0.0, 1.0, 1.0, 0.0, -1.0, 1.0);
+
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+
+        glBindTexture(GL_TEXTURE_2D, sScreenTex);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 240, 160, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
+
+        if (sFallbackFrames <= 5)
+            printf("[Voxel2D] glGetError after glTexImage2D: %d\n", glGetError());
+
+        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0.0f, 0.0f); glVertex2f(0.0f, 0.0f);
+        glTexCoord2f(1.0f, 0.0f); glVertex2f(1.0f, 0.0f);
+        glTexCoord2f(1.0f, 1.0f); glVertex2f(1.0f, 1.0f);
+        glTexCoord2f(0.0f, 1.0f); glVertex2f(0.0f, 1.0f);
+        glEnd();
+
+        glFlush();
+        SDL_GL_SwapWindow(sdlWindow);
+
+        // Any time we fall back to 2D we want a camera snap on next 3D frame
+        sNeedCameraSnap = true;
+        sPrintedOnce = false;
+        return;
+    }
+
+    // ---- 3D OVERWORLD ----
+    REG_VCOUNT = 161;
+
+    // Detect map change → rebuild atlas + snap camera
+    bool mapChanged = DetectMapChange();
+    if (mapChanged || sLastMapLayout != gMapHeader.mapLayout) {
+        printf("[VoxelMap] Map changed! Rebuilding atlas...\n");
+        BuildVoxelAtlas();
+        sNeedCameraSnap = true;
+        sPrintedOnce = false;
+    }
+
+    int mapW, mapH;
+    VoxelWorld_GetMapDimensions(&mapW, &mapH);
+
+    // ---- Get canonical player world position ----
+    float playerWorldX = 0.0f, playerWorldZ = 0.0f;
+    GetVoxelObjectWorldPos(&gObjectEvents[gPlayerAvatar.objectEventId], &playerWorldX, &playerWorldZ);
+
+    // Billboard is centered on the tile. Add 0.5 so player stands in the middle.
+    float billX = playerWorldX + 0.5f;
+    float billZ = playerWorldZ + 0.5f;
+
+    // ---- Camera snap on map change / entry ----
+    if (sNeedCameraSnap) {
+        // Snap both the camera target and position to the player immediately.
+        sCamera.targetX = billX;
+        sCamera.targetZ = billZ;
+        sNeedCameraSnap = false;
+    }
+
+    // ---- Print map info once per map load ----
+    if (!sPrintedOnce) {
+        struct ObjectEvent *playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
+        int rawX = playerObj->currentCoords.x;
+        int rawY = playerObj->currentCoords.y;
+        int localX = rawX - MAP_OFFSET;
+        int localZ = rawY - MAP_OFFSET;
+        printf("[VoxelMap] map=%d:%d layout=%d\n",
+               gSaveBlock1Ptr->location.mapGroup,
+               gSaveBlock1Ptr->location.mapNum,
+               gMapHeader.mapLayoutId);
+        printf("[VoxelMap] dimensions=%dx%d\n", mapW, mapH);
+        printf("[VoxelMap] player raw=%d,%d\n", rawX, rawY);
+        printf("[VoxelMap] player local=%d,%d\n", localX, localZ);
+        printf("[VoxelMap] camera=%.2f,%.2f\n", sCamera.targetX, sCamera.targetZ);
+        printf("[VoxelMap] MAP_OFFSET=%d\n", MAP_OFFSET);
+        sPrintedOnce = true;
+    }
+
+    // ---- We update object sprite textures below in the main drawing loop ----
+
+    // ---- Camera smooth-follow ----
+    VoxelCamera_Update(&sCamera, billX, billZ);
+
+    // ---- Viewport + clear ----
+    int winW, winH;
+    SDL_GL_GetDrawableSize(sdlWindow, &winW, &winH);
+    glViewport(0, 0, winW, winH);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+    glEnable(GL_ALPHA_TEST);
+    glAlphaFunc(GL_GREATER, 0.5f);
+
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    VoxelCamera_ApplyProjection(&sCamera, winW, winH);
+    VoxelCamera_ApplyView(&sCamera);
+
+    // ---- Map geometry ----
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, sVoxelAtlasTex);
+    glColor3f(1.0f, 1.0f, 1.0f);
+
+    extern void VoxelMesh_BuildWalls(int mapW, int mapH);
+    extern bool gVoxelWallConsumed[256][256];
+    
+    for (int y = 0; y < 256; y++) {
+        for (int x = 0; x < 256; x++) {
+            gVoxelWallConsumed[y][x] = false;
+        }
+    }
+
+    if (!gVoxelDebugFlatMode) {
+        VoxelMesh_BuildWalls(mapW, mapH);
+    }
+
+    for (int y = 0; y < mapH; y++) {
+        for (int x = 0; x < mapW; x++) {
+            VoxelVisualShape terrain = VoxelWorld_ClassifyTile(x, y);
+            int metatileId = VoxelWorld_GetMetatileId(x, y);
+            if (gVoxelDebugFlatMode) {
+                // Draw entirely flat for debugging
+                float wx = (float)x;
+                float wz = (float)y;
+                float atlasW = 512.0f;
+                float atlasH = 512.0f;
+                float u0 = (metatileId % 32) * 16.0f / atlasW;
+                float v0 = (metatileId / 32) * 16.0f / atlasH;
+                float u1 = u0 + (16.0f / atlasW);
+                float v1 = v0 + (16.0f / atlasH);
+                
+                glEnable(GL_TEXTURE_2D);
+                glColor3f(1.0f, 1.0f, 1.0f);
+                glBegin(GL_QUADS);
+                glTexCoord2f(u0, v0); glVertex3f(wx,      0.0f, wz);
+                glTexCoord2f(u1, v0); glVertex3f(wx+1.0f, 0.0f, wz);
+                glTexCoord2f(u1, v1); glVertex3f(wx+1.0f, 0.0f, wz+1.0f);
+                glTexCoord2f(u0, v1); glVertex3f(wx,      0.0f, wz+1.0f);
+                glEnd();
+                glDisable(GL_TEXTURE_2D);
+
+                // Highlight shapes with semi-transparent colors
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glBegin(GL_QUADS);
+                if (terrain == VOXEL_SHAPE_WALL) glColor4f(1.0f, 0.0f, 0.0f, 0.5f);
+                else if (terrain == VOXEL_SHAPE_WALL_TOP) glColor4f(0.0f, 1.0f, 0.0f, 0.5f);
+                else if (terrain == VOXEL_SHAPE_VOID) glColor4f(0.0f, 0.0f, 0.0f, 0.8f);
+                else if (terrain == VOXEL_SHAPE_FLOOR) glColor4f(0.0f, 0.0f, 1.0f, 0.2f);
+                else glColor4f(1.0f, 1.0f, 0.0f, 0.3f); // Objects/Furniture
+
+                glVertex3f(wx,      0.01f, wz);
+                glVertex3f(wx+1.0f, 0.01f, wz);
+                glVertex3f(wx+1.0f, 0.01f, wz+1.0f);
+                glVertex3f(wx,      0.01f, wz+1.0f);
+                glEnd();
+                glDisable(GL_BLEND);
+            } else {
+                extern bool gVoxelWallConsumed[256][256];
+                if (!gVoxelWallConsumed[y][x]) {
+                    VoxelMesh_DrawTile(x, y, terrain, metatileId);
+                }
+            }
+        }
+    }
+
+    // ---- Debug: movement logging every 60 frames ----
+    static int sLogCooldown = 0;
+    if (sLogCooldown-- <= 0) {
+        sLogCooldown = 60;
+        struct ObjectEvent *obj = &gObjectEvents[gPlayerAvatar.objectEventId];
+        struct Sprite *sprite = &gSprites[obj->spriteId];
+        float t = GetMovementProgress(obj, sprite);
+        const char *dirNames[] = {"NONE","SOUTH","NORTH","WEST","EAST","SW","SE","NW","NE"};
+        int dir = (int)(u16)sprite->data[3];
+        if (dir > 8) dir = 0;
+        printf("[VoxelMove] dir=%s prev=(%d,%d) cur=(%d,%d) t=%.3f world=(%.3f,%.3f)\n",
+               dirNames[dir],
+               obj->previousCoords.x - MAP_OFFSET, obj->previousCoords.y - MAP_OFFSET,
+               obj->currentCoords.x  - MAP_OFFSET, obj->currentCoords.y  - MAP_OFFSET,
+               t, playerWorldX, playerWorldZ);
+    }
+
+    // ---- Object Events (NPCs, Player, etc.) ----
+    glDisable(GL_TEXTURE_2D);
+    
+    // Sort object events by Z (depth) so things in front draw last, or just let depth testing handle it.
+    // We'll rely on depth testing and alpha testing for now.
+    for (int i = 0; i < 16; i++) {
+        struct ObjectEvent *obj = &gObjectEvents[i];
+        if (!obj->active) continue;
+        
+        struct Sprite *sprite = &gSprites[obj->spriteId];
+        if (sprite->invisible) continue;
+        
+        UpdateObjectSpriteTexture(sprite, &sObjectEventTex[i], &sObjectEventW[i], &sObjectEventH[i]);
+        
+        float objX = 0.0f, objZ = 0.0f;
+        if (GetVoxelObjectWorldPos(obj, &objX, &objZ)) {
+            float bX = objX + 0.5f;
+            float bZ = objZ + 0.5f;
+            VoxelMesh_DrawPlayerBillboard(bX, 0.0f, bZ,
+                                          sCamera.x, sCamera.y, sCamera.z,
+                                          sObjectEventTex[i], sObjectEventW[i], sObjectEventH[i]);
+        }
+    }
+
+    // ---- 2D UI Overlay ----
+    extern void DrawFrame(uint16_t *pixels);
+    uint16_t oldDispCnt = REG_DISPCNT;
+    // Disable BG1, BG2, BG3, and OBJ for the UI overlay to only show text boxes / menus (usually BG0).
+    // Start menu cursor is sometimes OBJ, but if we enable OBJ we see the player sprite, so we hide OBJs for now.
+    REG_DISPCNT &= ~(0x0200 | 0x0400 | 0x0800 | 0x1000); 
+
+    static uint16_t gbaImage[240 * 160];
+    static uint32_t uiImage[240 * 160];
+    memset(gbaImage, 0, sizeof(gbaImage));
+    DrawFrame(gbaImage);
+    REG_DISPCNT = oldDispCnt;
+
+    uint16_t backdrop = *(uint16_t *)PLTT;
+    for (int i = 0; i < 240 * 160; i++) {
+        uint16_t color = gbaImage[i];
+        if (color == backdrop || color == 0) { // 0 is also often transparent
+            uiImage[i] = 0; // transparent
+        } else {
+            uint32_t r = (color & 0x1F) * 255 / 31;
+            uint32_t g = ((color >> 5) & 0x1F) * 255 / 31;
+            uint32_t b = ((color >> 10) & 0x1F) * 255 / 31;
+            uiImage[i] = r | (g << 8) | (b << 16) | (255u << 24);
+        }
+    }
+
+    static GLuint sUiTex = 0;
+    if (!sUiTex) {
+        glGenTextures(1, &sUiTex);
+        glBindTexture(GL_TEXTURE_2D, sUiTex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, sUiTex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 240, 160, 0, GL_RGBA, GL_UNSIGNED_BYTE, uiImage);
+
+    // Setup 2D ortho projection for UI
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0.0, 1.0, 1.0, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 0.0f); glVertex2f(0.0f, 0.0f);
+    glTexCoord2f(1.0f, 0.0f); glVertex2f(1.0f, 0.0f);
+    glTexCoord2f(1.0f, 1.0f); glVertex2f(1.0f, 1.0f);
+    glTexCoord2f(0.0f, 1.0f); glVertex2f(0.0f, 1.0f);
+    glEnd();
+
+    SDL_GL_SwapWindow(sdlWindow);
+}
+
+void VoxelRenderer_Shutdown(void)
+{
+    // Nothing to do for GL immediate mode
+}
+
+bool VoxelRenderer_Init(void)
+{
+    setvbuf(stdout, NULL, _IONBF, 0);
+    printf("[Voxel] GL vendor: %s\n", (const char *)glGetString(GL_VENDOR));
+    printf("[Voxel] GL renderer: %s\n", (const char *)glGetString(GL_RENDERER));
+    printf("[Voxel] GL version: %s\n", (const char *)glGetString(GL_VERSION));
+
+    glEnable(GL_DEPTH_TEST);
+    glClearColor(0.5f, 0.7f, 1.0f, 1.0f); // Sky blue
+
+    VoxelCamera_Init(&sCamera);
+
+    sNeedCameraSnap = true;
+    sLastMapLayoutId = 0xFFFF;
+    sLastMapGroup = 0xFF;
+    sLastMapNum = 0xFF;
+
+    return true;
+}
+
+#endif // NATIVE_LINUX
+#endif // PLATFORM_SDL2
