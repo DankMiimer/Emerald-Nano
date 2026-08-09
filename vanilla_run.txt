@@ -1,0 +1,18 @@
+[Mods] Disabled
+libEGL warning: pci id for fd 17: 10de:1f06, driver (null)
+
+pci id for fd 18: 10de:1f06, driver (null)
+pci id for fd 19: 10de:1f06, driver (null)
+libEGL warning: egl: failed to create dri2 screen
+pci id for fd 18: 10de:1f06, driver (null)
+pci id for fd 19: 10de:1f06, driver (null)
+libEGL warning: egl: failed to create dri2 screen
+GetTime: 00:52:12
+GetDateTime: 26-08-10 00:52:12
+function "void GameCubeMultiBoot_Init()" is a stub
+[DoMain] Executing VBlankIntr, REG_DISPSTAT=9629
+[DoMain] Executing VBlankIntr, REG_DISPSTAT=9629
+[DoMain] Executing VBlankIntr, REG_DISPSTAT=9629
+[DoMain] Executing VBlankIntr, REG_DISPSTAT=9629
+[DoMain] Executing VBlankIntr, REG_DISPSTAT=9629
+[DoMain] Executing VBlankIntr, REG_DISPSTAT=9629
