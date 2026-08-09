@@ -1,0 +1,24 @@
+{
+  "maps": [
+    {
+      "map_group": 0,
+      "map_num": 9,
+      "tiles": [
+        {
+          "x": 6,
+          "y": 8,
+          "metatile": 1,
+          "collision": 1,
+          "elevation": 3
+        },
+        {
+          "x": 7,
+          "y": 8,
+          "metatile": 1,
+          "collision": 1,
+          "elevation": 3
+        }
+      ]
+    }
+  ]
+}

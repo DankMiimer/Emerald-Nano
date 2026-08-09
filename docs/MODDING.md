@@ -83,8 +83,10 @@ The ModManager currently supports overriding the following data at runtime via J
 - **Items**: `data/items.json` (price, pocket, etc.)
 - **Text**: `data/text.json` (species names)
 - **Graphics**: `graphics/trainers/front_pics/`
+- **Map Patches**: `data/maps.json` (Existing maps only. Modifies metatile/collision for existing coordinates. Dimension replacement not supported yet.)
+- **Event Patches**: `data/maps.json` (Overrides object events x, y, graphics_id, movement_type)
+- **Script Overrides**: `data/scripts.json` (Replaces script bytecode for existing object events using a subset of commands: lock, faceplayer, msgbox, release, end, return, lockall, releaseall)
+
 
 ## Planned Support
-- **Maps**: `data/maps.json` for layout overrides
-- **Scripts**: `data/scripts.json` for event script bytecode
 - **Audio**: `data/audio.json` + `audio/` replacements (blocked by runtime audio loading architecture)

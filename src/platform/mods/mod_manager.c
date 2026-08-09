@@ -320,8 +320,11 @@ void ModManager_Shutdown(void) {
     ModMoves_Shutdown();
     ModItems_Shutdown();
     ModText_Shutdown();
+    ModMaps_Shutdown();
+    ModScripts_Shutdown();
     ModAudio_Shutdown();
     ModMaps_Shutdown();
+    ModScripts_Shutdown();
     ModScripts_Shutdown();
 }
 

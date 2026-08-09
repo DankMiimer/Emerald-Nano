@@ -28,13 +28,21 @@ void ModItems_LoadOverrides(LoadedMod *mod);
 void ModItems_Shutdown(void);
 
 void ModText_LoadOverrides(LoadedMod *mod);
+void ModMaps_LoadOverrides(LoadedMod *mod);
+void ModScripts_LoadOverrides(LoadedMod *mod);
+const u8 *ModScripts_GetObjectScript(u8 mapGroup, u8 mapNum, u8 objectIndex);
 void ModText_Shutdown(void);
+void ModMaps_Shutdown(void);
+void ModScripts_Shutdown(void);
 
 void ModAudio_LoadOverrides(LoadedMod *mod);
 void ModAudio_Shutdown(void);
 
 void ModMaps_LoadOverrides(LoadedMod *mod);
+void ModScripts_LoadOverrides(LoadedMod *mod);
+const u8 *ModScripts_GetObjectScript(u8 mapGroup, u8 mapNum, u8 objectIndex);
 void ModMaps_Shutdown(void);
+void ModScripts_Shutdown(void);
 
 void ModScripts_LoadOverrides(LoadedMod *mod);
 void ModScripts_Shutdown(void);

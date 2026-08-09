@@ -10,10 +10,6 @@
 void ModAudio_LoadOverrides(LoadedMod *mod) {}
 void ModAudio_Shutdown(void) {}
 
-void ModMaps_LoadOverrides(LoadedMod *mod) {}
-void ModMaps_Shutdown(void) {}
 
-void ModScripts_LoadOverrides(LoadedMod *mod) {}
-void ModScripts_Shutdown(void) {}
 
 #endif
