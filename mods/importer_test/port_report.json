@@ -19,6 +19,31 @@
       "changed": 19,
       "imported": 19,
       "unsupported": 0
+    },
+    "trainers": {
+      "changed": 8,
+      "imported": 8,
+      "unsupported": 0
+    },
+    "encounters": {
+      "changed": 1,
+      "imported": 1,
+      "unsupported": 0
+    },
+    "moves": {
+      "changed": 19,
+      "imported": 19,
+      "unsupported": 0
+    },
+    "items": {
+      "changed": 3,
+      "imported": 3,
+      "unsupported": 0
+    },
+    "text": {
+      "changed": 1,
+      "imported": 1,
+      "unsupported": 0
     }
   },
   "unsupported": {

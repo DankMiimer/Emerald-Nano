@@ -45,7 +45,7 @@ def main():
     
     # 3. Diff and Parse
     report = Report()
-    mod_data = compare_projects(vanilla_proj, source_proj, report)
+    mod_data = compare_projects(vanilla_proj, source_proj, report, args.output)
     
     # 4. Write Output
     if not args.dry_run and args.output:
@@ -71,7 +71,7 @@ def main():
         for name, data in mod_data.items():
             if data: # Only emit files with content
                 with open(os.path.join(data_dir, f"{name}.json"), "w") as f:
-                    json.dump({name: data}, f, indent=2)
+                    json.dump(data, f, indent=2)
                     
         # Write Report
         report.write_to_directory(args.output)

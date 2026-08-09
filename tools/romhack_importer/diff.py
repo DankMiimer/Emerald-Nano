@@ -1,7 +1,12 @@
-
 from importers.maps import diff_maps
 from importers.starters import diff_starters
 from importers.species import diff_species
+from importers.trainers import diff_trainers
+from importers.encounters import diff_encounters
+from importers.moves import diff_moves
+from importers.items import diff_items
+from importers.text import diff_text
+from importers.graphics import diff_graphics
 import os
 import filecmp
 from constants import Constants
@@ -15,7 +20,7 @@ def detect_engine_changes(vanilla, source, report):
             
         for root, dirs, files in os.walk(s_dir):
             for file in files:
-                if not (file.endswith(".c") or file.endswith(".h")):
+                if not (file.endswith(".c") or file.endswith(".h") or file.endswith(".s") or file.endswith(".inc")):
                     continue
                 s_path = os.path.join(root, file)
                 rel_path = os.path.relpath(s_path, s_dir)
@@ -29,7 +34,7 @@ def detect_engine_changes(vanilla, source, report):
                 elif not filecmp.cmp(v_path, s_path, shallow=False):
                     report.add_unsupported("custom_code", os.path.join(d, rel_path), "Modified engine file")
 
-def compare_projects(vanilla, source, report):
+def compare_projects(vanilla, source, report, output_dir=None):
     mod_data = {}
     
     detect_engine_changes(vanilla, source, report)
@@ -50,5 +55,27 @@ def compare_projects(vanilla, source, report):
     if species_data:
         mod_data["species"] = species_data
         
+    trainers_data = diff_trainers(vanilla, source, consts, report)
+    if trainers_data:
+        mod_data["trainers"] = trainers_data
+        
+    encounters_data = diff_encounters(vanilla, source, consts, report)
+    if encounters_data:
+        mod_data["encounters"] = encounters_data
+        
+    moves_data = diff_moves(vanilla, source, consts, report)
+    if moves_data:
+        mod_data["moves"] = moves_data
+        
+    items_data = diff_items(vanilla, source, consts, report)
+    if items_data:
+        mod_data["items"] = items_data
+        
+    text_data = diff_text(vanilla, source, consts, report)
+    if text_data:
+        mod_data["text"] = text_data
+        
+    if output_dir:
+        diff_graphics(vanilla, source, consts, report, output_dir)
+        
     return mod_data
-

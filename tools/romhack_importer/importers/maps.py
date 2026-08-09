@@ -162,6 +162,7 @@ def diff_maps(vanilla, source, consts, report):
             if v_tiles and s_tiles:
                 if v_w != s_w or v_h != s_h:
                     report.add_unsupported("resized_maps", map_name, f"Vanilla: {v_w}x{v_h}, Hack: {s_w}x{s_h}")
+                    continue # Skip the entire map to avoid misleading partial port
                 else:
                     for i in range(v_w * v_h):
                         if v_tiles[i] != s_tiles[i]:
@@ -193,4 +194,4 @@ def diff_maps(vanilla, source, consts, report):
                 map_patches.append(patch)
                 report.add_summary("maps", 1, 1, 0)
                 
-    return map_patches, script_patches
+    return ({"maps": map_patches} if map_patches else None, {"scripts": script_patches} if script_patches else None)

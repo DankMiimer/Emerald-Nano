@@ -37,4 +37,4 @@ def diff_starters(vanilla, source, consts, report):
             })
             report.add_summary("starters", 1, 1, 0)
             
-    return starters
+    return {"starters": starters} if starters else None

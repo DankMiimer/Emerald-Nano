@@ -64,4 +64,4 @@ def diff_species(vanilla, source, consts, report):
             species_patches.append(diffs)
             report.add_summary("species", 1, 1, 0)
             
-    return species_patches
+    return {"species": species_patches} if species_patches else None

@@ -12,7 +12,10 @@ class Constants:
         headers = [
             "include/constants/event_objects.h",
             "include/constants/event_object_movement.h",
-            "include/constants/species.h"
+            "include/constants/species.h",
+            "include/constants/opponents.h",
+            "include/constants/moves.h",
+            "include/constants/items.h"
         ]
         
         for h in headers:

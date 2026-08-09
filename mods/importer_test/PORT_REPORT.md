@@ -17,6 +17,26 @@ Species:
 19 changed
 19 imported
 
+Trainers:
+8 changed
+8 imported
+
+Encounters:
+1 changed
+1 imported
+
+Moves:
+19 changed
+19 imported
+
+Items:
+3 changed
+3 imported
+
+Text:
+1 changed
+1 imported
+
 ## Unsupported Content
 ### Custom code
 - **src/starter_choose.c**

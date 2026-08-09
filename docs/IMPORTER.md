@@ -4,12 +4,26 @@ The ROM Hack Importer is a Python-based utility located at `tools/romhack_import
 Its purpose is to extract compatible modifications from a standard `pret/pokeemerald` decompilation project and convert them into a runtime mod package for `pokeemerald-multiplatform`.
 
 ## Features
-- **Map Patching**: Detects changes to map tiles, dimensions, and object events.
-- **Script Compilation**: Extracts `scripts.inc`, detecting modified scripts and compiling them into runtime bytecode.
-- **Starters**: Detects changes to `starter_choose.c` and exports starter overrides.
-- **Species**: Parses `species_info.h` and extracts changed Pokémon base stats.
-- **Engine Change Detection**: Analyzes `src/` and `include/` to detect modifications to C code, warning you in the port report.
-- **Constant Resolution**: Automatically resolves C preprocessor macros (e.g. `SPECIES_BULBASAUR`) into their numeric values for the runtime json.
+The importer correctly detects and exports:
+- **Map Patching**: Detects changes to map tiles and object events.
+- **Script Compilation**: Extracts modified `scripts.inc` and compiles supported macros.
+- **Starters**: Detects changes to `starter_choose.c`.
+- **Species**: Parses `species_info.h` to extract changed base stats.
+- **Trainers**: Parses `trainers.h` and `trainer_parties.h` to extract changed trainer parties.
+- **Encounters**: Parses `wild_encounters.json` to extract changed wild encounters.
+- **Moves**: Parses `battle_moves.h` to extract modified move parameters.
+- **Items**: Parses `items.h` to extract modified item parameters (excluding custom function pointers).
+- **Text**: Parses `species_names.h` to extract modified species names.
+
+## Limitations & Unsupported Features
+The importer is designed for runtime parity. The following modifications are **not supported** by the ModManager and will be ignored/reported during import:
+- Arbitrary C code/ASM modifications
+- New Maps, Resized Maps, and Map connections
+- New Species IDs, New Move IDs, New Item IDs, New Trainer IDs
+- Trainer modifications beyond Party Level and Species
+- Arbitrary text changes outside of Species Names and script Dialogue
+- Unsupported script macros
+- Binary IPS/UPS patch importing
 
 ## Usage
 
@@ -28,5 +42,3 @@ python3 tools/romhack_importer/main.py --vanilla <path/to/vanilla> --source <pat
 Every time the importer runs, it generates two files in the output directory:
 - `PORT_REPORT.md`: A human-readable markdown summary of what was imported and what was unsupported.
 - `port_report.json`: A machine-readable copy of the report.
-
-If you modified C code, added new object event types, or used unsupported script macros, the report will list exactly which files and scripts were skipped so you can port them manually or redesign them.
