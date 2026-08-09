@@ -18,6 +18,7 @@
 #ifdef NATIVE_LINUX
 #include <SDL2/SDL_image.h>
 #include "voxel/voxel_renderer.h"
+#include "mods/mod_manager.h"
 #endif
 
 #ifdef PLATFORM_SDL2
@@ -107,6 +108,8 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--voxel") == 0 || strcmp(argv[i], "--renderer=voxel") == 0)
             gVoxelModeEnabled = true;
+        if (strcmp(argv[i], "--mods") == 0)
+            gModsEnabled = true;
     }
 #endif
 
@@ -115,6 +118,7 @@ int main(int argc, char **argv)
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
     SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
 #endif
+    ModManager_Init();
     if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO
 #ifdef __ANDROID__
                 | SDL_INIT_GAMECONTROLLER
@@ -484,6 +488,8 @@ int main(int argc, char **argv)
     }
 #endif
     SDL_DestroyWindow(sdlWindow);
+    ModManager_Shutdown();
+    ModManager_Shutdown();
     SDL_Quit();
     return 0;
 }

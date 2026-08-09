@@ -8,6 +8,7 @@
 #include "main.h"
 #include "menu.h"
 #include "palette.h"
+#include "platform/mods/mod_manager.h"
 #include "pokedex.h"
 #include "pokemon.h"
 #include "scanline_effect.h"
@@ -352,7 +353,8 @@ u16 GetStarterPokemon(u16 chosenStarterId)
 {
     if (chosenStarterId > STARTER_MON_COUNT)
         chosenStarterId = 0;
-    return sStarterMon[chosenStarterId];
+
+    return ModManager_GetStarterSpecies(chosenStarterId, sStarterMon[chosenStarterId]);
 }
 
 static void VblankCB_StarterChoose(void)

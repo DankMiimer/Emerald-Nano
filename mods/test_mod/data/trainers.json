@@ -1,0 +1,17 @@
+{
+  "trainers": [
+    {
+      "id": 318,
+      "party": [
+        {
+          "species": 150,
+          "level": 99
+        },
+        {
+          "species": 406,
+          "level": 99
+        }
+      ]
+    }
+  ]
+}

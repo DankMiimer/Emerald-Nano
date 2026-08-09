@@ -1,0 +1,9 @@
+{
+  "format_version": 1,
+  "id": "test_mod",
+  "name": "Test Mod",
+  "version": "0.1.0",
+  "description": "Runtime mod-loader test",
+  "author": "Antigravity",
+  "priority": 100
+}
