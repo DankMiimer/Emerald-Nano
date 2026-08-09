@@ -31,8 +31,8 @@
       "unsupported": 0
     },
     "items": {
-      "changed": 99,
-      "imported": 99,
+      "changed": 74,
+      "imported": 74,
       "unsupported": 0
     }
   },
@@ -3187,6 +3187,106 @@
       {
         "name": "ITEM_UP_GRADE",
         "reason": "Modified unsupported fields: type"
+      },
+      {
+        "name": "ITEM_TM_DRAGON_CLAW",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_CALM_MIND",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_ROAR",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_TOXIC",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_BULK_UP",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_SUNNY_DAY",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_ICE_BEAM",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_RAIN_DANCE",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_GIGA_DRAIN",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_FRUSTRATION",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_SOLAR_BEAM",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_IRON_TAIL",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_THUNDERBOLT",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_EARTHQUAKE",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_RETURN",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_DIG",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_PSYCHIC",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_SHADOW_BALL",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_BRICK_BREAK",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_DOUBLE_TEAM",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_FLAMETHROWER",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_SLUDGE_BOMB",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_SANDSTORM",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_FACADE",
+        "reason": "UNRESOLVED ITEM ID"
+      },
+      {
+        "name": "ITEM_TM_OVERHEAT",
+        "reason": "UNRESOLVED ITEM ID"
       }
     ],
     "new_items": [

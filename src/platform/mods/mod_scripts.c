@@ -1,9 +1,9 @@
+#include <stdlib.h>
 #include "mod_internal.h"
 #include "mod_manager.h"
 #include "malloc.h"
 #include <string.h>
 
-#define MAX_SCRIPT_OVERRIDES 64
 #define MAX_BYTECODE_SIZE 1024
 #define MAX_STRINGS_PER_SCRIPT 16
 #define MAX_STRING_SIZE 256
@@ -18,7 +18,8 @@ typedef struct {
     int numStrings;
 } ScriptOverride;
 
-static ScriptOverride sScriptOverrides[MAX_SCRIPT_OVERRIDES];
+static ScriptOverride **sScriptOverrides = NULL;
+static int sScriptOverridesCapacity = 0;
 static int sNumScriptOverrides = 0;
 
 static u8 CharToEmeraldChar(char c) {
@@ -65,7 +66,7 @@ void ModScripts_LoadOverrides(LoadedMod *mod) {
 
     cJSON *root = cJSON_Parse(jsonStr);
     if (!root) {
-        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\\n", path);
+        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\n", path);
         extern void free(void*);
         free(jsonStr);
         return;
@@ -84,9 +85,15 @@ void ModScripts_LoadOverrides(LoadedMod *mod) {
             
             if (!cJSON_IsNumber(mapGroupObj) || !cJSON_IsNumber(mapNumObj) || !cJSON_IsNumber(objectIndexObj)) continue;
             
-            if (sNumScriptOverrides >= MAX_SCRIPT_OVERRIDES) break;
             
-            ScriptOverride *ov = &sScriptOverrides[sNumScriptOverrides++];
+            
+            if (sNumScriptOverrides >= sScriptOverridesCapacity) {
+                sScriptOverridesCapacity = sScriptOverridesCapacity == 0 ? 64 : sScriptOverridesCapacity * 2;
+                sScriptOverrides = realloc(sScriptOverrides, sScriptOverridesCapacity * sizeof(ScriptOverride*));
+            }
+            ScriptOverride *ov = malloc(sizeof(ScriptOverride));
+            memset(ov, 0, sizeof(ScriptOverride));
+            sScriptOverrides[sNumScriptOverrides++] = ov;
             ov->mapGroup = mapGroupObj->valueint;
             ov->mapNum = mapNumObj->valueint;
             ov->objectIndex = objectIndexObj->valueint;
@@ -165,7 +172,7 @@ void ModScripts_LoadOverrides(LoadedMod *mod) {
                 ov->bytecode[pc++] = 0x02; // end
             }
             
-            fprintf(stderr, "[Mods]   Loaded script override %d.%d obj:%d from %s\\n", ov->mapGroup, ov->mapNum, ov->objectIndex, mod->id);
+            fprintf(stderr, "[Mods]   Loaded script override %d.%d obj:%d from %s\n", ov->mapGroup, ov->mapNum, ov->objectIndex, mod->id);
         }
     }
 
@@ -178,8 +185,8 @@ const u8 *ModScripts_GetObjectScript(u8 mapGroup, u8 mapNum, u8 objectIndex) {
     if (!gModsEnabled) return NULL;
     
     for (int i = 0; i < sNumScriptOverrides; i++) {
-        if (sScriptOverrides[i].mapGroup == mapGroup && sScriptOverrides[i].mapNum == mapNum && sScriptOverrides[i].objectIndex == objectIndex) {
-            return sScriptOverrides[i].bytecode;
+        if (sScriptOverrides[i]->mapGroup == mapGroup && sScriptOverrides[i]->mapNum == mapNum && sScriptOverrides[i]->objectIndex == objectIndex) {
+            return sScriptOverrides[i]->bytecode;
         }
     }
     return NULL;
@@ -187,15 +194,15 @@ const u8 *ModScripts_GetObjectScript(u8 mapGroup, u8 mapNum, u8 objectIndex) {
 
 void ModScripts_Shutdown(void) {
     for (int i = 0; i < sNumScriptOverrides; i++) {
-        if (sScriptOverrides[i].bytecode) {
+        if (sScriptOverrides[i]->bytecode) {
             extern void free(void*);
-            free(sScriptOverrides[i].bytecode);
-            sScriptOverrides[i].bytecode = NULL;
+            free(sScriptOverrides[i]->bytecode);
+            sScriptOverrides[i]->bytecode = NULL;
         }
-        for (int j = 0; j < sScriptOverrides[i].numStrings; j++) {
+        for (int j = 0; j < sScriptOverrides[i]->numStrings; j++) {
             extern void free(void*);
-            free(sScriptOverrides[i].strings[j]);
-            sScriptOverrides[i].strings[j] = NULL;
+            free(sScriptOverrides[i]->strings[j]);
+            sScriptOverrides[i]->strings[j] = NULL;
         }
     }
     sNumScriptOverrides = 0;

@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,7 +47,6 @@ static void InitRAMShadows(void) {
 bool8 gModsEnabled = FALSE;
 
 #define MAX_LOADED_MODS 32
-#define MAX_TRAINER_OVERRIDES 128
 
 
 
@@ -65,7 +65,8 @@ typedef struct {
 static LoadedMod sLoadedMods[MAX_LOADED_MODS];
 static int sNumLoadedMods = 0;
 
-static TrainerOverride sTrainerOverrides[MAX_TRAINER_OVERRIDES];
+static TrainerOverride **sTrainerOverrides = NULL;
+static int sTrainerOverridesCapacity = 0;
 static int sNumTrainerOverrides = 0;
 
 static StarterOverride sStarterOverrides[3];
@@ -117,11 +118,15 @@ static void LoadTrainerOverrides(LoadedMod *mod) {
             cJSON *idObj = cJSON_GetObjectItem(trainer, "id");
             if (!cJSON_IsNumber(idObj)) continue;
             u16 tId = idObj->valueint;
+            if (tId == 0 || tId >= TRAINERS_COUNT) {
+                fprintf(stderr, "[Mods][ERROR] %s: Invalid/unresolved trainer ID %d; override skipped.\n", mod->id, tId);
+                continue;
+            }
 
             // Check if already overridden (higher priority mod would have done it)
             bool8 alreadyOverridden = FALSE;
             for (int i = 0; i < sNumTrainerOverrides; i++) {
-                if (sTrainerOverrides[i].trainerId == tId) {
+                if (sTrainerOverrides[i]->trainerId == tId) {
                     alreadyOverridden = TRUE;
                     fprintf(stderr, "[Mods] trainer %d overridden conflict. Winner priority kept.\n", tId);
                     break;
@@ -129,8 +134,14 @@ static void LoadTrainerOverrides(LoadedMod *mod) {
             }
             if (alreadyOverridden) continue;
 
-            if (sNumTrainerOverrides >= MAX_TRAINER_OVERRIDES) break;
-            TrainerOverride *ov = &sTrainerOverrides[sNumTrainerOverrides++];
+            
+            if (sNumTrainerOverrides >= sTrainerOverridesCapacity) {
+                sTrainerOverridesCapacity = sTrainerOverridesCapacity == 0 ? 128 : sTrainerOverridesCapacity * 2;
+                sTrainerOverrides = realloc(sTrainerOverrides, sTrainerOverridesCapacity * sizeof(TrainerOverride*));
+            }
+            TrainerOverride *ov = malloc(sizeof(TrainerOverride));
+            memset(ov, 0, sizeof(TrainerOverride));
+            sTrainerOverrides[sNumTrainerOverrides++] = ov;
             ov->trainerId = tId;
             
             // Base off vanilla to keep name/class/etc if not specified
@@ -336,8 +347,8 @@ const struct Trainer *ModManager_GetTrainer(u16 trainerId) {
     if (!gModsEnabled) return &gTrainers[trainerId];
 
     for (int i = 0; i < sNumTrainerOverrides; i++) {
-        if (sTrainerOverrides[i].trainerId == trainerId) {
-            return &sTrainerOverrides[i].data;
+        if (sTrainerOverrides[i]->trainerId == trainerId) {
+            return &sTrainerOverrides[i]->data;
         }
     }
     return &gTrainers[trainerId];

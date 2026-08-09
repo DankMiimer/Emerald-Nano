@@ -10,7 +10,7 @@ void ModMoves_LoadOverrides(LoadedMod *mod) {
 
     cJSON *root = cJSON_Parse(jsonStr);
     if (!root) {
-        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\\n", path);
+        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\n", path);
         extern void free(void*);
         free(jsonStr);
         return;
@@ -26,8 +26,8 @@ void ModMoves_LoadOverrides(LoadedMod *mod) {
 
             // Notice: using 355 as MOVES_COUNT is not strictly needed if we just check against MOVES_COUNT
             // We use MOVES_COUNT which is 355 in pokeemerald
-            if (move >= MOVES_COUNT) {
-                fprintf(stderr, "[Mods][ERROR] %s: move ID %d out of bounds\\n", mod->id, move);
+            if (move == 0 || move >= MOVES_COUNT) {
+                fprintf(stderr, "[Mods][ERROR] %s: Invalid/unresolved move ID %d; override skipped.\n", mod->id, move);
                 continue;
             }
 
@@ -54,7 +54,7 @@ void ModMoves_LoadOverrides(LoadedMod *mod) {
             cJSON *priority = cJSON_GetObjectItem(moveObj, "priority");
             if (cJSON_IsNumber(priority)) info->priority = priority->valueint;
 
-            fprintf(stderr, "[Mods]   Loaded move override %d from %s\\n", move, mod->id);
+            fprintf(stderr, "[Mods]   Loaded move override %d from %s\n", move, mod->id);
         }
     }
 

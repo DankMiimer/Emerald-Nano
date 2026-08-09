@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "mod_internal.h"
 #include "mod_manager.h"
 #include "global.fieldmap.h"
@@ -5,7 +6,6 @@
 extern void *malloc(unsigned int);
 #include <string.h>
 
-#define MAX_MAP_OVERRIDES 64
 
 typedef struct {
     u8 mapGroup;
@@ -25,7 +25,8 @@ typedef struct {
     cJSON *patchData; // Keep the cJSON node around to apply patches on demand? No, parse into our own structures or apply immediately.
 } MapOverride;
 
-static MapOverride sMapOverrides[MAX_MAP_OVERRIDES];
+static MapOverride **sMapOverrides = NULL;
+static int sMapOverridesCapacity = 0;
 static int sNumMapOverrides = 0;
 
 void ModMaps_LoadOverrides(LoadedMod *mod) {
@@ -36,7 +37,7 @@ void ModMaps_LoadOverrides(LoadedMod *mod) {
 
     cJSON *root = cJSON_Parse(jsonStr);
     if (!root) {
-        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\\n", path);
+        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\n", path);
         extern void free(void*);
         free(jsonStr);
         return;
@@ -54,29 +55,32 @@ void ModMaps_LoadOverrides(LoadedMod *mod) {
             u8 mapGroup = groupObj->valueint;
             u8 mapNum = numObj->valueint;
 
-            if (sNumMapOverrides >= MAX_MAP_OVERRIDES) {
-                fprintf(stderr, "[Mods][ERROR] Too many map overrides.\\n");
-                break;
-            }
+            
 
             // Check priority
             bool8 alreadyOverridden = FALSE;
             for (int i = 0; i < sNumMapOverrides; i++) {
-                if (sMapOverrides[i].mapGroup == mapGroup && sMapOverrides[i].mapNum == mapNum) {
+                if (sMapOverrides[i]->mapGroup == mapGroup && sMapOverrides[i]->mapNum == mapNum) {
                     alreadyOverridden = TRUE;
                     break;
                 }
             }
             if (alreadyOverridden) continue;
 
-            MapOverride *ov = &sMapOverrides[sNumMapOverrides++];
+            if (sNumMapOverrides >= sMapOverridesCapacity) {
+                sMapOverridesCapacity = sMapOverridesCapacity == 0 ? 64 : sMapOverridesCapacity * 2;
+                sMapOverrides = realloc(sMapOverrides, sMapOverridesCapacity * sizeof(MapOverride*));
+            }
+            MapOverride *ov = malloc(sizeof(MapOverride));
+            memset(ov, 0, sizeof(MapOverride));
+            sMapOverrides[sNumMapOverrides++] = ov;
             ov->mapGroup = mapGroup;
             ov->mapNum = mapNum;
             ov->initialized = FALSE;
-            // Detach JSON object and store it for lazy application
-            ov->patchData = cJSON_DetachItemViaPointer(maps, mapObj);
+            // Duplicate JSON object and store it for lazy application
+            ov->patchData = cJSON_Duplicate(mapObj, 1);
 
-            fprintf(stderr, "[Mods]   Loaded map override %d.%d from %s\\n", mapGroup, mapNum, mod->id);
+            fprintf(stderr, "[Mods]   Loaded map override %d.%d from %s\n", mapGroup, mapNum, mod->id);
         }
     }
 
@@ -194,8 +198,8 @@ const struct MapHeader *ModManager_GetMapHeaderByMap(u16 mapGroup, u16 mapNum, c
     if (!gModsEnabled) return vanilla;
     
     for (int i = 0; i < sNumMapOverrides; i++) {
-        if (sMapOverrides[i].mapGroup == mapGroup && sMapOverrides[i].mapNum == mapNum) {
-            MapOverride *ov = &sMapOverrides[i];
+        if (sMapOverrides[i]->mapGroup == mapGroup && sMapOverrides[i]->mapNum == mapNum) {
+            MapOverride *ov = sMapOverrides[i];
             if (!ov->initialized) {
                 InitializeMapOverride(ov, vanilla);
             }
@@ -207,21 +211,21 @@ const struct MapHeader *ModManager_GetMapHeaderByMap(u16 mapGroup, u16 mapNum, c
 
 void ModMaps_Shutdown(void) {
     for (int i = 0; i < sNumMapOverrides; i++) {
-        if (sMapOverrides[i].mapData) {
+        if (sMapOverrides[i]->mapData) {
             extern void free(void*);
-            free(sMapOverrides[i].mapData);
-            sMapOverrides[i].mapData = NULL;
+            free(sMapOverrides[i]->mapData);
+            sMapOverrides[i]->mapData = NULL;
         }
-        if (sMapOverrides[i].events.objectEvents && sMapOverrides[i].vanillaHeader && sMapOverrides[i].events.objectEvents != sMapOverrides[i].vanillaHeader->events->objectEvents) {
+        if (sMapOverrides[i]->events.objectEvents && sMapOverrides[i]->vanillaHeader && sMapOverrides[i]->events.objectEvents != sMapOverrides[i]->vanillaHeader->events->objectEvents) {
             extern void free(void*);
-            free((void*)sMapOverrides[i].events.objectEvents);
-            sMapOverrides[i].events.objectEvents = NULL;
+            free((void*)sMapOverrides[i]->events.objectEvents);
+            sMapOverrides[i]->events.objectEvents = NULL;
         }
-        if (sMapOverrides[i].patchData) {
-            cJSON_Delete(sMapOverrides[i].patchData);
-            sMapOverrides[i].patchData = NULL;
+        if (sMapOverrides[i]->patchData) {
+            cJSON_Delete(sMapOverrides[i]->patchData);
+            sMapOverrides[i]->patchData = NULL;
         }
-        sMapOverrides[i].initialized = FALSE;
+        sMapOverrides[i]->initialized = FALSE;
     }
     sNumMapOverrides = 0;
 }

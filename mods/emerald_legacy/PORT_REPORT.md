@@ -26,8 +26,8 @@ Moves:
 133 imported
 
 Items:
-99 changed
-99 imported
+74 changed
+74 imported
 
 ## Unsupported Content
 ### Custom code
@@ -1611,6 +1611,56 @@ Items:
   Reason: Modified unsupported fields: type
 - **ITEM_UP_GRADE**
   Reason: Modified unsupported fields: type
+- **ITEM_TM_DRAGON_CLAW**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_CALM_MIND**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_ROAR**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_TOXIC**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_BULK_UP**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_SUNNY_DAY**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_ICE_BEAM**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_RAIN_DANCE**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_GIGA_DRAIN**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_FRUSTRATION**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_SOLAR_BEAM**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_IRON_TAIL**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_THUNDERBOLT**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_EARTHQUAKE**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_RETURN**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_DIG**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_PSYCHIC**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_SHADOW_BALL**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_BRICK_BREAK**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_DOUBLE_TEAM**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_FLAMETHROWER**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_SLUDGE_BOMB**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_SANDSTORM**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_FACADE**
+  Reason: UNRESOLVED ITEM ID
+- **ITEM_TM_OVERHEAT**
+  Reason: UNRESOLVED ITEM ID
 
 ### New items
 - **ITEM_BRICK_PIECE**

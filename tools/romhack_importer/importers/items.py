@@ -76,8 +76,12 @@ def diff_items(vanilla, source, consts, report):
             report.add_unsupported("items", i_id, f"Modified unsupported fields: {', '.join(unsupported)}")
             
         if diffs and not has_custom_code:
-            diffs["id"] = consts.resolve(i_id)
-            item_patches.append(diffs)
-            report.add_summary("items", 1, 1, 0)
+            resolved_id = consts.resolve(i_id)
+            if resolved_id == 0 and i_id != "ITEM_NONE":
+                report.add_unsupported("items", i_id, "UNRESOLVED ITEM ID")
+            else:
+                diffs["id"] = resolved_id
+                item_patches.append(diffs)
+                report.add_summary("items", 1, 1, 0)
             
     return {"items": item_patches} if item_patches else None

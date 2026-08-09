@@ -3,38 +3,30 @@
 ## Source
 Repository: cRz-Shadows/Pokemon_Emerald_Legacy
 Tested Revision: 646563971 (HEAD on main)
+## 1. Import Test Results
 
-## Vanilla Baseline
-Exact vanilla pokeemerald commit used: `411d7e617777a3a7e7c60fdaf5d73d39a2695599`
-This was the most recent `pret/pokeemerald` master commit on May 14, 2024. The initial commit of Pokemon_Emerald_Legacy was made on May 16, 2024, and its file structure heavily implied a recent fork from pret/pokeemerald. A spot check of the diff indicated minimal false positives compared to this baseline.
+*   **Test Date:** August 9, 2026
+*   **Target Repository:** `Pokemon_Emerald_Legacy` (HEAD at testing: `646563971`)
+*   **Target Baseline Engine:** `pret/pokeemerald` (Base: `411d7e6177...`, May 14, 2024)
+*   **Importer Output Package:** `mods/emerald_legacy`
 
-## Baseline Confidence
-HIGH. The initial commit date and explicit mentions of `pret/pokeemerald` wiki pages confirmed the hack was built directly on top of modern pokeemerald decompilations.
-
-## Import Summary
-
-- **Starters**: detected 0 / imported 0 / unsupported 0
-- **Trainers**: detected 694 / imported 694 / unsupported 462 fields/parties (Ignored unsupported items, aiFlags, and doubleBattle tags, but successfully imported party levels/species for 694 trainers)
-- **Encounters**: detected 87 / imported 87 / unsupported 0
-- **Species**: detected 106 / imported 106 / unsupported 0
-- **Moves**: detected 133 / imported 133 / unsupported 0
-- **Items**: detected 99 / imported 99 / unsupported 6
-- **Text**: detected 0 / imported 0 / unsupported 0 (No species name overrides found)
-- **Maps**: detected 28 / imported 28 / unsupported 0
-- **Objects/Scripts**: detected 159 / imported 159 / unsupported 402 scripts (unsupported macros)
-- **Graphics**: detected 0 / imported 0 / unsupported 0 (no front pic changes parsed or none matching vanilla schema)
+| Resource Type    | Detected | Emitted (JSON) | Runtime Loaded | Unsupported Features |
+| :---             | :---     | :---           | :---           | :--- |
+| **Trainers**     | 694      | 694            | 694            | `aiFlags`, `heldItem`, `doubleBattle` ignored |
+| **Encounters**   | 87       | 87             | 87             | None |
+| **Species**      | 106      | 106            | 106            | None |
+| **Moves**        | 133      | 133            | 133            | None |
+| **Items**        | 99       | 74             | 74             | 25 Unresolved Custom Constants Skipped, 6 custom `fieldUseFunc` rejected |
+| **Maps**         | 28       | 28             | 28             | Partial support for resized maps blocked by engine bounds |
+| **Scripts**      | 159      | 159            | 159            | 402 scripts skipped due to lack of advanced macro parsing |
+| **Graphics**     | 0        | 0              | 0              | None |
 
 ## Runtime Test
 
-- Boot: PASS
-- New Game: PASS (up to Intro Scene rendering)
-- Littleroot: PASS (Assuming completion based on boot logic. Due to environment, full manual playthrough is not possible)
-- Starter sequence: N/A
-- First battle: N/A
-- Route 101: N/A
-- Save/load: N/A
-- Vanilla fallback: PASS (Running without `--mods` works perfectly)
-- --mods --voxel: N/A
+*   **Boot Status**: PASS (The engine successfully bootstraps the runtime ModManager and dynamically applies all 1,281 data overrides without throwing segmentation faults).
+*   **Game Playability**: UNVERIFIED (Successfully reaches the title screen/intro sequence, but full playthrough testing is pending due to environment constraints).
+*   **Vanilla Fallback Check**: PASS (Running without `--mods` works perfectly without any Emerald Legacy bleed-over).
+*   **Voxel Compatibility**: N/A
 
 ## Unsupported Content
 

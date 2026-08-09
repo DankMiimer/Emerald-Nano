@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "mod_internal.h"
 #include "mod_manager.h"
 #include "wild_encounter.h"
@@ -5,7 +6,6 @@
 
 extern void free(void*);
 
-#define MAX_ENCOUNTER_OVERRIDES 64
 
 typedef struct {
     u8 mapGroup;
@@ -29,7 +29,8 @@ typedef struct {
     struct WildPokemonHeader header;
 } EncounterOverride;
 
-static EncounterOverride sEncounterOverrides[MAX_ENCOUNTER_OVERRIDES];
+static EncounterOverride **sEncounterOverrides = NULL;
+static int sEncounterOverridesCapacity = 0;
 static int sNumEncounterOverrides = 0;
 
 static void ParseEncounterSlots(cJSON *slots, struct WildPokemon *mons, int maxSlots) {
@@ -64,7 +65,7 @@ void ModEncounters_LoadOverrides(LoadedMod *mod) {
 
     cJSON *root = cJSON_Parse(jsonStr);
     if (!root) {
-        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\\n", path);
+        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\n", path);
         free(jsonStr);
         return;
     }
@@ -80,22 +81,25 @@ void ModEncounters_LoadOverrides(LoadedMod *mod) {
             u8 mapGroup = groupObj->valueint;
             u8 mapNum = numObj->valueint;
 
-            if (sNumEncounterOverrides >= MAX_ENCOUNTER_OVERRIDES) {
-                fprintf(stderr, "[Mods][ERROR] Too many encounter overrides.\\n");
-                break;
-            }
+            
 
             // Check priority
             bool8 alreadyOverridden = FALSE;
             for (int i = 0; i < sNumEncounterOverrides; i++) {
-                if (sEncounterOverrides[i].mapGroup == mapGroup && sEncounterOverrides[i].mapNum == mapNum) {
+                if (sEncounterOverrides[i]->mapGroup == mapGroup && sEncounterOverrides[i]->mapNum == mapNum) {
                     alreadyOverridden = TRUE;
                     break;
                 }
             }
             if (alreadyOverridden) continue;
 
-            EncounterOverride *ov = &sEncounterOverrides[sNumEncounterOverrides++];
+            if (sNumEncounterOverrides >= sEncounterOverridesCapacity) {
+                sEncounterOverridesCapacity = sEncounterOverridesCapacity == 0 ? 64 : sEncounterOverridesCapacity * 2;
+                sEncounterOverrides = realloc(sEncounterOverrides, sEncounterOverridesCapacity * sizeof(EncounterOverride*));
+            }
+            EncounterOverride *ov = malloc(sizeof(EncounterOverride));
+            memset(ov, 0, sizeof(EncounterOverride));
+            sEncounterOverrides[sNumEncounterOverrides++] = ov;
             ov->mapGroup = mapGroup;
             ov->mapNum = mapNum;
             ov->hasLand = FALSE;
@@ -139,7 +143,7 @@ void ModEncounters_LoadOverrides(LoadedMod *mod) {
             // (Skipping RockSmash and Fishing for brevity in test mod, but parsed if provided similarly)
             // Can just add them exactly like water.
             
-            fprintf(stderr, "[Mods]   Loaded encounter override map %d.%d from %s\\n", mapGroup, mapNum, mod->id);
+            fprintf(stderr, "[Mods]   Loaded encounter override map %d.%d from %s\n", mapGroup, mapNum, mod->id);
         }
     }
 
@@ -155,9 +159,9 @@ const struct WildPokemonHeader *ModManager_GetWildMonHeader(u16 headerId, const 
     if (!gModsEnabled) return vanilla;
     
     for (int i = 0; i < sNumEncounterOverrides; i++) {
-        if (sEncounterOverrides[i].mapGroup == vanilla->mapGroup && sEncounterOverrides[i].mapNum == vanilla->mapNum) {
+        if (sEncounterOverrides[i]->mapGroup == vanilla->mapGroup && sEncounterOverrides[i]->mapNum == vanilla->mapNum) {
             // For fields we DID NOT override, fallback to vanilla!
-            EncounterOverride *ov = &sEncounterOverrides[i];
+            EncounterOverride *ov = sEncounterOverrides[i];
             ov->header.landMonsInfo = ov->hasLand ? &ov->landInfo : vanilla->landMonsInfo;
             ov->header.waterMonsInfo = ov->hasWater ? &ov->waterInfo : vanilla->waterMonsInfo;
             ov->header.rockSmashMonsInfo = ov->hasRockSmash ? &ov->rockSmashInfo : vanilla->rockSmashMonsInfo;
@@ -171,8 +175,8 @@ const struct WildPokemonHeader *ModManager_GetWildMonHeader(u16 headerId, const 
 const struct WildPokemonHeader *ModManager_GetWildMonHeaderByMap(u8 mapGroup, u8 mapNum, const struct WildPokemonHeader *vanilla) {
     if (!gModsEnabled) return vanilla;
     for (int i = 0; i < sNumEncounterOverrides; i++) {
-        if (sEncounterOverrides[i].mapGroup == mapGroup && sEncounterOverrides[i].mapNum == mapNum) {
-            EncounterOverride *ov = &sEncounterOverrides[i];
+        if (sEncounterOverrides[i]->mapGroup == mapGroup && sEncounterOverrides[i]->mapNum == mapNum) {
+            EncounterOverride *ov = sEncounterOverrides[i];
             ov->header.landMonsInfo = ov->hasLand ? &ov->landInfo : (vanilla ? vanilla->landMonsInfo : NULL);
             ov->header.waterMonsInfo = ov->hasWater ? &ov->waterInfo : (vanilla ? vanilla->waterMonsInfo : NULL);
             ov->header.rockSmashMonsInfo = ov->hasRockSmash ? &ov->rockSmashInfo : (vanilla ? vanilla->rockSmashMonsInfo : NULL);

@@ -10,7 +10,7 @@ void ModStats_LoadOverrides(LoadedMod *mod) {
 
     cJSON *root = cJSON_Parse(jsonStr);
     if (!root) {
-        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\\n", path);
+        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\n", path);
         extern void free(void*);
         free(jsonStr);
         return;
@@ -24,8 +24,8 @@ void ModStats_LoadOverrides(LoadedMod *mod) {
             if (!cJSON_IsNumber(idObj)) continue;
             u16 species = idObj->valueint;
 
-            if (species >= NUM_SPECIES) {
-                fprintf(stderr, "[Mods][ERROR] %s: species ID %d out of bounds\\n", mod->id, species);
+            if (species == 0 || species >= NUM_SPECIES) {
+                fprintf(stderr, "[Mods][ERROR] %s: Invalid/unresolved species ID %d; override skipped.\n", mod->id, species);
                 continue;
             }
 
@@ -49,7 +49,7 @@ void ModStats_LoadOverrides(LoadedMod *mod) {
             cJSON *spDef = cJSON_GetObjectItem(specObj, "base_sp_defense");
             if (cJSON_IsNumber(spDef)) info->baseSpDefense = spDef->valueint;
             
-            fprintf(stderr, "[Mods]   Loaded species override %d from %s\\n", species, mod->id);
+            fprintf(stderr, "[Mods]   Loaded species override %d from %s\n", species, mod->id);
         }
     }
 

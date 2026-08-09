@@ -11,7 +11,7 @@ void ModItems_LoadOverrides(LoadedMod *mod) {
 
     cJSON *root = cJSON_Parse(jsonStr);
     if (!root) {
-        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\\n", path);
+        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\n", path);
         extern void free(void*);
         free(jsonStr);
         return;
@@ -25,8 +25,8 @@ void ModItems_LoadOverrides(LoadedMod *mod) {
             if (!cJSON_IsNumber(idObj)) continue;
             u16 item = idObj->valueint;
 
-            if (item >= ITEMS_COUNT) {
-                fprintf(stderr, "[Mods][ERROR] %s: item ID %d out of bounds\\n", mod->id, item);
+            if (item == 0 || item >= ITEMS_COUNT) {
+                fprintf(stderr, "[Mods][ERROR] %s: Invalid/unresolved item ID %d; override skipped.\n", mod->id, item);
                 continue;
             }
 
@@ -50,7 +50,7 @@ void ModItems_LoadOverrides(LoadedMod *mod) {
             // Note: we can't easily override text because strings are pointer-based and we'd have to allocate.
             // But this satisfies Phase 4 (Items) for data fields.
 
-            fprintf(stderr, "[Mods]   Loaded item override %d from %s\\n", item, mod->id);
+            fprintf(stderr, "[Mods]   Loaded item override %d from %s\n", item, mod->id);
         }
     }
 

@@ -11,7 +11,7 @@ void ModText_LoadOverrides(LoadedMod *mod) {
 
     cJSON *root = cJSON_Parse(jsonStr);
     if (!root) {
-        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\\n", path);
+        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\n", path);
         extern void free(void*);
         free(jsonStr);
         return;
@@ -34,7 +34,7 @@ void ModText_LoadOverrides(LoadedMod *mod) {
                 gSpeciesNames[id][POKEMON_NAME_LENGTH] = 0; // null terminate (actually Emerald uses 0xFF, but standard ASCII works if font supports it or if mapped)
                 // Let's actually use a basic ASCII-to-Emerald macro/function if we had one.
                 // For this milestone, we just demonstrate the architecture.
-                fprintf(stderr, "[Mods]   Loaded species name %d from %s\\n", id, mod->id);
+                fprintf(stderr, "[Mods]   Loaded species name %d from %s\n", id, mod->id);
             }
         }
     }
