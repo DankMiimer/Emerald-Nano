@@ -71,3 +71,20 @@ Overrides the opponent's Trainer Party configuration and details.
 ### `graphics/trainer_front_pics/<ID>.4bpp`
 
 Provides an uncompressed 2048-byte `.4bpp` graphical override for a specific Trainer front sprite. Replace `<ID>` with the `TRAINER_PIC_*` numeric ID.
+
+## Current Support
+
+The ModManager currently supports overriding the following data at runtime via JSON:
+- **Trainers**: `data/trainers.json` (party overrides)
+- **Starters**: `data/starters.json`
+- **Encounters**: `data/encounters.json` (wild encounters)
+- **Species Stats**: `data/species.json` (base stats)
+- **Moves**: `data/moves.json` (power, accuracy, etc.)
+- **Items**: `data/items.json` (price, pocket, etc.)
+- **Text**: `data/text.json` (species names)
+- **Graphics**: `graphics/trainers/front_pics/`
+
+## Planned Support
+- **Maps**: `data/maps.json` for layout overrides
+- **Scripts**: `data/scripts.json` for event script bytecode
+- **Audio**: `data/audio.json` + `audio/` replacements (blocked by runtime audio loading architecture)

@@ -1,0 +1,25 @@
+{
+  "maps": [
+    {
+      "map_group": 0,
+      "map_num": 16,
+      "land": {
+        "encounter_rate": 20,
+        "slots": [
+          { "species": 371, "min_level": 2, "max_level": 4 },
+          { "species": 280, "min_level": 2, "max_level": 4 },
+          { "species": 287, "min_level": 2, "max_level": 4 },
+          { "species": 371, "min_level": 2, "max_level": 4 },
+          { "species": 280, "min_level": 2, "max_level": 4 },
+          { "species": 287, "min_level": 2, "max_level": 4 },
+          { "species": 371, "min_level": 2, "max_level": 4 },
+          { "species": 280, "min_level": 2, "max_level": 4 },
+          { "species": 287, "min_level": 2, "max_level": 4 },
+          { "species": 371, "min_level": 2, "max_level": 4 },
+          { "species": 280, "min_level": 2, "max_level": 4 },
+          { "species": 287, "min_level": 2, "max_level": 4 }
+        ]
+      }
+    }
+  ]
+}

@@ -23,5 +23,11 @@ bool8 ModManager_GetTrainerFrontPicOverride(u16 trainerPicId, void *destBuffer);
 u16 ModManager_GetStarterSpecies(u8 slot, u16 vanillaSpecies);
 u8 ModManager_GetStarterLevel(u8 slot, u8 vanillaLevel);
 
+
+struct WildPokemonHeader;
+const struct WildPokemonHeader *ModManager_GetWildMonHeader(u16 headerId, const struct WildPokemonHeader *vanilla);
+const struct WildPokemonHeader *ModManager_GetWildMonHeaderByMap(u8 mapGroup, u8 mapNum, const struct WildPokemonHeader *vanilla);
+
 #endif // GUARD_MOD_MANAGER_H
+
 

@@ -4,6 +4,41 @@
 #include <dirent.h>
 #include "cJSON.h"
 #include "mod_manager.h"
+
+#include "wild_encounter.h"
+#include "pokemon.h"
+#include "battle.h"
+#include "item.h"
+#include "constants/species.h"
+#include "constants/items.h"
+#include "constants/moves.h"
+#include "malloc.h"
+
+struct WildPokemonHeader *gWildMonHeaders = NULL;
+extern const u8 gSpeciesNames_ROM[][POKEMON_NAME_LENGTH + 1];
+u8 gSpeciesNames[NUM_SPECIES][POKEMON_NAME_LENGTH + 1];
+struct SpeciesInfo gSpeciesInfo[NUM_SPECIES];
+struct BattleMove gBattleMoves[MOVES_COUNT];
+struct Item gItems[ITEMS_COUNT];
+
+static void InitRAMShadows(void) {
+    // Determine size of gWildMonHeaders_ROM
+    int numWildHeaders = 0;
+    while (gWildMonHeaders_ROM[numWildHeaders].mapGroup != 0xFF) { // MAP_GROUP(MAP_UNDEFINED) is usually 0xFF
+        numWildHeaders++;
+    }
+    numWildHeaders++; // Include the terminator
+
+    gWildMonHeaders = malloc(numWildHeaders * sizeof(struct WildPokemonHeader));
+    memcpy(gWildMonHeaders, gWildMonHeaders_ROM, numWildHeaders * sizeof(struct WildPokemonHeader));
+
+    memcpy(gSpeciesInfo, gSpeciesInfo_ROM, sizeof(gSpeciesInfo));
+    memcpy(gSpeciesNames, gSpeciesNames_ROM, sizeof(gSpeciesNames));
+    memcpy(gBattleMoves, gBattleMoves_ROM, sizeof(gBattleMoves));
+    memcpy(gItems, gItems_ROM, sizeof(gItems));
+}
+
+#include "mod_internal.h"
 #include "constants/trainers.h"
 
 #ifdef NATIVE_LINUX
@@ -13,11 +48,7 @@ bool8 gModsEnabled = FALSE;
 #define MAX_LOADED_MODS 32
 #define MAX_TRAINER_OVERRIDES 128
 
-typedef struct {
-    char id[64];
-    int priority;
-    char path[256];
-} LoadedMod;
+
 
 typedef struct {
     u16 trainerId;
@@ -51,7 +82,7 @@ static int CompareMods(const void *a, const void *b) {
     return strcmp(ma->id, mb->id);
 }
 
-static char* ReadFileToString(const char *path) {
+char* ModManager_ReadFileToString(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
     fseek(f, 0, SEEK_END);
@@ -69,7 +100,7 @@ static char* ReadFileToString(const char *path) {
 static void LoadTrainerOverrides(LoadedMod *mod) {
     char path[512];
     snprintf(path, sizeof(path), "%s/data/trainers.json", mod->path);
-    char *jsonStr = ReadFileToString(path);
+    char *jsonStr = ModManager_ReadFileToString(path);
     if (!jsonStr) return;
 
     cJSON *root = cJSON_Parse(jsonStr);
@@ -139,7 +170,7 @@ static void LoadTrainerOverrides(LoadedMod *mod) {
 static void LoadStarterOverrides(LoadedMod *mod) {
     char path[512];
     snprintf(path, sizeof(path), "%s/data/starters.json", mod->path);
-    char *jsonStr = ReadFileToString(path);
+    char *jsonStr = ModManager_ReadFileToString(path);
     if (!jsonStr) return;
 
     cJSON *root = cJSON_Parse(jsonStr);
@@ -234,7 +265,7 @@ void ModManager_Init(void) {
         char manifestPath[512];
         snprintf(manifestPath, sizeof(manifestPath), "mods/%s/mod.json", ent->d_name);
 
-        char *jsonStr = ReadFileToString(manifestPath);
+        char *jsonStr = ModManager_ReadFileToString(manifestPath);
         if (!jsonStr) continue;
 
         cJSON *root = cJSON_Parse(jsonStr);
@@ -262,10 +293,19 @@ void ModManager_Init(void) {
     // Sort by priority descending
     qsort(sLoadedMods, sNumLoadedMods, sizeof(LoadedMod), CompareMods);
 
+    InitRAMShadows();
     for (int i = 0; i < sNumLoadedMods; i++) {
         fprintf(stderr, "[Mods] Loading %s\n", sLoadedMods[i].id);
         LoadTrainerOverrides(&sLoadedMods[i]);
         LoadStarterOverrides(&sLoadedMods[i]);
+        ModEncounters_LoadOverrides(&sLoadedMods[i]);
+        ModStats_LoadOverrides(&sLoadedMods[i]);
+        ModMoves_LoadOverrides(&sLoadedMods[i]);
+        ModItems_LoadOverrides(&sLoadedMods[i]);
+        ModText_LoadOverrides(&sLoadedMods[i]);
+        ModAudio_LoadOverrides(&sLoadedMods[i]);
+        ModMaps_LoadOverrides(&sLoadedMods[i]);
+        ModScripts_LoadOverrides(&sLoadedMods[i]);
     }
 
     fprintf(stderr, "[Mods] Loaded %d mod(s) successfully\n", sNumLoadedMods);
@@ -275,6 +315,14 @@ void ModManager_Shutdown(void) {
     sNumLoadedMods = 0;
     sNumTrainerOverrides = 0;
     sNumStarterOverrides = 0;
+    ModEncounters_Shutdown();
+    ModStats_Shutdown();
+    ModMoves_Shutdown();
+    ModItems_Shutdown();
+    ModText_Shutdown();
+    ModAudio_Shutdown();
+    ModMaps_Shutdown();
+    ModScripts_Shutdown();
 }
 
 bool8 ModManager_IsEnabled(void) {
@@ -295,6 +343,7 @@ const struct Trainer *ModManager_GetTrainer(u16 trainerId) {
 bool8 ModManager_GetTrainerFrontPicOverride(u16 trainerPicId, void *destBuffer) {
     if (!gModsEnabled) return FALSE;
 
+    InitRAMShadows();
     for (int i = 0; i < sNumLoadedMods; i++) {
         char path[512];
         snprintf(path, sizeof(path), "%s/graphics/trainer_front_pics/%d.4bpp", sLoadedMods[i].path, trainerPicId);
@@ -339,7 +388,7 @@ bool8 gModsEnabled = FALSE;
 static void LoadStarterOverrides(LoadedMod *mod) {
     char path[512];
     snprintf(path, sizeof(path), "%s/data/starters.json", mod->path);
-    char *jsonStr = ReadFileToString(path);
+    char *jsonStr = ModManager_ReadFileToString(path);
     if (!jsonStr) return;
 
     cJSON *root = cJSON_Parse(jsonStr);
