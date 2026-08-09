@@ -1,0 +1,32 @@
+[Mods] Mod system enabled
+[Mods] Root: ./mods
+[Mods] Found 1 mods
+[Mods] Loading test_mod
+[Mods]   Loaded trainer override 318 from test_mod
+[Mods]   Loaded starter override slot 0 -> species 406 lvl 5 from test_mod
+[Mods]   Loaded starter override slot 1 -> species 151 lvl 5 from test_mod
+[Mods]   Loaded starter override slot 2 -> species 349 lvl 5 from test_mod
+[Mods]   Loaded encounter override map 0.16 from test_mod\n[Mods]   Loaded species override 1 from test_mod\n[Mods]   Loaded move override 33 from test_mod\n[Mods]   Loaded item override 4 from test_mod\n[Mods]   Loaded species name 1 from test_mod\n[Mods]   Loaded map override 0.9 from test_mod\n[Mods] Loaded 1 mod(s) successfully
+libEGL warning: pci id for fd 17: 10de:1f06, driver (null)
+
+pci id for fd 18: 10de:1f06, driver (null)
+pci id for fd 19: 10de:1f06, driver (null)
+libEGL warning: egl: failed to create dri2 screen
+pci id for fd 18: 10de:1f06, driver (null)
+pci id for fd 19: 10de:1f06, driver (null)
+libEGL warning: egl: failed to create dri2 screen
+[Voxel] GL vendor: Mesa
+[Voxel] GL renderer: llvmpipe (LLVM 22.1.8, 256 bits)
+[Voxel] GL version: 4.6 (Compatibility Profile) Mesa 26.1.5-arch3.1
+GetTime: 23:51:24
+GetDateTime: 26-08-09 23:51:24
+function "void GameCubeMultiBoot_Init()" is a stub
+[Voxel2D] glGetError after glTexImage2D: 0
+[DoMain] Executing VBlankIntr, REG_DISPSTAT=9629
+[Voxel2D] glGetError after glTexImage2D: 0
+[Voxel2D] glGetError after glTexImage2D: 0
+[Voxel2D] glGetError after glTexImage2D: 0
+[Voxel2D] glGetError after glTexImage2D: 0
+[DoMain] Executing VBlankIntr, REG_DISPSTAT=9629
+[DoMain] Executing VBlankIntr, REG_DISPSTAT=9629
+[DoMain] Executing VBlankIntr, REG_DISPSTAT=9629

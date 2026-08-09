@@ -1,0 +1,17 @@
+{
+  "maps": [
+    {
+      "map_group": 0,
+      "map_num": 9,
+      "objects": [
+        {
+          "index": 3,
+          "x": 6,
+          "y": 8,
+          "graphics_id": 215,
+          "movement_type": 7
+        }
+      ]
+    }
+  ]
+}

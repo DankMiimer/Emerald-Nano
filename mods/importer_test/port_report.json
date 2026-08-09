@@ -1,0 +1,40 @@
+{
+  "summary": {
+    "maps": {
+      "changed": 1,
+      "imported": 1,
+      "unsupported": 0
+    },
+    "scripts": {
+      "changed": 3,
+      "imported": 3,
+      "unsupported": 0
+    },
+    "starters": {
+      "changed": 3,
+      "imported": 3,
+      "unsupported": 0
+    },
+    "species": {
+      "changed": 19,
+      "imported": 19,
+      "unsupported": 0
+    }
+  },
+  "unsupported": {
+    "new_maps": [],
+    "resized_maps": [],
+    "custom_code": [
+      {
+        "name": "src/starter_choose.c",
+        "reason": "Modified engine file"
+      }
+    ],
+    "scripts": [
+      {
+        "name": "LittlerootTown.LittlerootTown_EventScript_Mom",
+        "reason": "Unsupported command: checkplayergender"
+      }
+    ]
+  }
+}
