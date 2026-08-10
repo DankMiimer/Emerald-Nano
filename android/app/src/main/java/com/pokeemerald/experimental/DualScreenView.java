@@ -432,7 +432,7 @@ public final class DualScreenView extends View {
                 + (mon.gender == 0 ? " ♂" : mon.gender == 1 ? " ♀" : "");
         f.draw(canvas, header, textLeft, rect.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
 
-        float badgeH = rect.height() * 0.18f;
+        float badgeH = rect.height() * 0.11f;
         drawTypeBadge(canvas, mon.types[0], rect.right - inset - badgeH * 3.1f,
                 rect.bottom - inset - badgeH, badgeH);
         if (mon.types[1] != mon.types[0]) {
@@ -529,7 +529,7 @@ public final class DualScreenView extends View {
                     float inset = cellH * 0.16f;
                     f.draw(canvas, move.name, cell.left + inset, cell.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
                     drawTypeBadge(canvas, move.type, cell.left + inset,
-                            cell.bottom - inset - cellH * 0.26f, cellH * 0.26f);
+                            cell.bottom - inset - cellH * 0.16f, cellH * 0.16f);
                     String pp = "PP " + move.pp + "/" + move.maxPp;
                     float w = f.measure(pp, scale * 0.9f);
                     f.draw(canvas, pp, cell.right - inset - w,
