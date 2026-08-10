@@ -405,6 +405,49 @@ public final class DualScreenView extends View {
         }
     }
 
+    private void drawBattleMonCard(Canvas canvas, DualScreenState.Mon mon, RectF rect,
+                                   String namePrefix, float scale) {
+        GbaFont f = font();
+        if (f == null || mon == null) {
+            return;
+        }
+        paint.setColor(PANEL_WHITE);
+        canvas.drawRoundRect(rect, 10, 10, paint);
+        paint.setColor(BAR_BORDER);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(3);
+        canvas.drawRoundRect(rect, 10, 10, paint);
+        paint.setStyle(Paint.Style.FILL);
+
+        float inset = rect.height() * 0.14f;
+        float iconSize = rect.height() * 0.68f;
+        Bitmap icon = monIcon(mon.species);
+        if (icon != null) {
+            canvas.drawBitmap(icon, null,
+                    new RectF(rect.left + inset, rect.centerY() - iconSize / 2,
+                              rect.left + inset + iconSize, rect.centerY() + iconSize / 2), pixelPaint);
+        }
+        float textLeft = rect.left + inset + iconSize + inset;
+        String header = namePrefix + mon.nick + "  Lv" + mon.level
+                + (mon.gender == 0 ? " ♂" : mon.gender == 1 ? " ♀" : "");
+        f.draw(canvas, header, textLeft, rect.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
+
+        float badgeH = rect.height() * 0.24f;
+        drawTypeBadge(canvas, mon.types[0], rect.right - inset - badgeH * 3.1f, rect.top + inset, badgeH);
+
+        float barTop = rect.top + inset + GbaFont.LINE_HEIGHT * scale + 10;
+        drawHpBar(canvas, textLeft, barTop, rect.right - inset - textLeft - badgeH * 3.4f,
+                rect.height() * 0.1f, mon.hp, mon.maxHp);
+        f.draw(canvas, mon.hp + "/" + mon.maxHp, textLeft,
+                barTop + rect.height() * 0.1f + 8, scale * 0.85f, TEXT_DARK, TEXT_SHADOW);
+        String status = statusLabel(mon.status, mon.hp);
+        if (status != null) {
+            float w = f.measure(status, scale * 0.85f);
+            f.draw(canvas, status, rect.right - inset - w,
+                    barTop + rect.height() * 0.1f + 8, scale * 0.85f, HP_RED, TEXT_SHADOW);
+        }
+    }
+
     private void drawBattle(Canvas canvas) {
         GbaFont f = font();
         if (!state.inBattle || state.battlePlayerMon == null || f == null) {
@@ -415,50 +458,32 @@ public final class DualScreenView extends View {
         float pad = getWidth() * 0.02f;
         float scale = getWidth() / 430f;
 
-        DualScreenState.Mon enemy = state.battleEnemyMon;
-        if (enemy != null) {
-            RectF top = new RectF(pad, pad, getWidth() - pad, contentHeight * 0.27f);
-            paint.setColor(PANEL_WHITE);
-            canvas.drawRoundRect(top, 10, 10, paint);
-            paint.setColor(BAR_BORDER);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(3);
-            canvas.drawRoundRect(top, 10, 10, paint);
-            paint.setStyle(Paint.Style.FILL);
-
-            float inset = top.height() * 0.14f;
-            float iconSize = top.height() * 0.68f;
-            Bitmap icon = monIcon(enemy.species);
-            if (icon != null) {
-                canvas.drawBitmap(icon, null,
-                        new RectF(top.left + inset, top.top + inset,
-                                  top.left + inset + iconSize, top.top + inset + iconSize), pixelPaint);
-            }
-            float textLeft = top.left + inset + iconSize + inset;
-            String header = (state.battleKind == 1 ? "FOE " : "WILD ") + enemy.name + "  Lv" + enemy.level;
-            f.draw(canvas, header, textLeft, top.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
-            float barTop = top.top + inset + GbaFont.LINE_HEIGHT * scale + 10;
-            drawHpBar(canvas, textLeft, barTop, top.right - inset - textLeft - top.height() * 0.9f,
-                    top.height() * 0.1f, enemy.hp, enemy.maxHp);
-            f.draw(canvas, enemy.hp + "/" + enemy.maxHp, textLeft,
-                    barTop + top.height() * 0.1f + 8, scale * 0.85f, TEXT_DARK, TEXT_SHADOW);
-            drawTypeBadge(canvas, enemy.types[0], top.right - inset - top.height() * 0.26f * 3.1f,
-                    top.top + inset, top.height() * 0.26f);
-        }
-
-        DualScreenState.Mon self = state.battlePlayerMon;
-        float headerTop = contentHeight * 0.30f;
-        String headline = self.nick + "  Lv" + self.level + "  " + self.hp + "/" + self.maxHp + " HP";
-        if (state.battleMenu == 0) {
-            headline = headline + "   ...";
-        }
-        f.draw(canvas, headline, pad * 1.5f, headerTop, scale, TEXT_DARK, TEXT_SHADOW);
-
         for (RectF r : battleButtons) r.setEmpty();
         battleCancel.setEmpty();
         battleButtonsMenu = state.battleMenu;
 
-        float gridTop = headerTop + GbaFont.LINE_HEIGHT * scale + pad;
+        DualScreenState.Mon enemy = state.battleEnemyMon;
+        DualScreenState.Mon self = state.battlePlayerMon;
+        float cardH = contentHeight * 0.24f;
+        float gridTop;
+
+        RectF enemyRect = new RectF(pad, pad, getWidth() - pad, pad + cardH);
+        if (enemy != null) {
+            drawBattleMonCard(canvas, enemy, enemyRect,
+                    state.battleKind == 1 ? "FOE " : "WILD ", scale);
+        }
+
+        if (state.battleMenu == 2) {
+            gridTop = enemyRect.bottom + pad;
+        } else {
+            RectF selfRect = new RectF(pad, enemyRect.bottom + pad,
+                    getWidth() - pad, enemyRect.bottom + pad + cardH);
+            drawBattleMonCard(canvas, self, selfRect, "", scale);
+            gridTop = selfRect.bottom + pad;
+            if (state.battleMenu == 0) {
+                return; // idle: just the two cards
+            }
+        }
 
         if (state.battleMenu == 1) {
             // Action menu: FIGHT / BAG / POKEMON / RUN, Gen 4 style.
