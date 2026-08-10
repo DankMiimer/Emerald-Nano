@@ -495,8 +495,9 @@ void DualScreen_FrameHook(void)
     }
 
     // While the bottom screen owns the move menu, keep the top screen's
-    // textbox on the message/prompt band instead of the move grid
-    // (BG0 scroll selects which band of the battle textbox is shown).
+    // textbox on the action/prompt band instead of the move grid: the
+    // "What will {x} do?" prompt stays visible and the move menu art never
+    // shows (BG0 scroll selects which band of the battle textbox is shown).
     if (DualScreen_BattleUiActive() && gMain.inBattle && DualScreen_PlayerAtMoveSelect())
         gBattle_BG0_Y = DISPLAY_HEIGHT;
 

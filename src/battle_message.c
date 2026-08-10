@@ -8,6 +8,7 @@
 #include "battle_message.h"
 #include "battle_setup.h"
 #include "battle_tower.h"
+#include "bg.h"
 #include "data.h"
 #include "event_data.h"
 #include "frontier_util.h"
@@ -2967,12 +2968,19 @@ void BattlePutTextOnWindow(const u8 *text, u8 windowId)
 
 #ifdef PLATFORM_SDL2
     // The bottom screen renders the action and move menus; suppress their
-    // text on the top screen (message box and prompts stay).
+    // text on the top screen. The "What will {x} do?" prompt normally lives
+    // on the action-menu band of the textbox, which stays hidden — show it
+    // in the message window instead.
     if (DualScreen_BattleUiActive())
     {
         switch (windowId)
         {
         case B_WIN_ACTION_MENU:
+            // Erase the action menu's box art (right half of the textbox
+            // band); the prompt on the left stays.
+            FillBgTilemapBufferRect(0, 0, 16, 35, 14, 5, 0x11);
+            CopyBgTilemapBufferToVram(0);
+            return;
         case B_WIN_MOVE_NAME_1:
         case B_WIN_MOVE_NAME_2:
         case B_WIN_MOVE_NAME_3:
