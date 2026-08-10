@@ -1,16 +1,36 @@
 package com.pokeemerald.experimental;
 
 import android.graphics.Rect;
+import android.hardware.display.DisplayManager;
 import android.os.Bundle;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.Display;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 
 import java.util.Arrays;
 
 import org.libsdl.app.SDLActivity;
 
 public class PokeEmeraldActivity extends SDLActivity {
+    private static final long SNAPSHOT_INTERVAL_MS = 250;
+
+    private DualScreenPresentation presentation;
+    private final Handler snapshotHandler = new Handler(Looper.getMainLooper());
+    private final Runnable snapshotPump = new Runnable() {
+        @Override
+        public void run() {
+            if (presentation != null && presentation.isShowing()) {
+                String json = DualScreenBridge.nativeGetSnapshotJson();
+                presentation.updateState(DualScreenState.parse(json));
+            }
+            snapshotHandler.postDelayed(this, SNAPSHOT_INTERVAL_MS);
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -18,6 +38,46 @@ public class PokeEmeraldActivity extends SDLActivity {
         mLayout.addView(controls, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        showBottomScreen();
+        snapshotHandler.removeCallbacks(snapshotPump);
+        snapshotHandler.postDelayed(snapshotPump, SNAPSHOT_INTERVAL_MS);
+    }
+
+    @Override
+    protected void onPause() {
+        snapshotHandler.removeCallbacks(snapshotPump);
+        dismissBottomScreen();
+        super.onPause();
+    }
+
+    private void showBottomScreen() {
+        if (presentation != null && presentation.isShowing()) {
+            return;
+        }
+        DisplayManager displayManager = (DisplayManager) getSystemService(DISPLAY_SERVICE);
+        Display[] displays = displayManager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
+        if (displays.length == 0) {
+            return; // Single-display device; game stays fullscreen.
+        }
+        presentation = new DualScreenPresentation(this, displays[0]);
+        presentation.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        try {
+            presentation.show();
+        } catch (WindowManager.InvalidDisplayException e) {
+            presentation = null;
+        }
+    }
+
+    private void dismissBottomScreen() {
+        if (presentation != null) {
+            presentation.dismiss();
+            presentation = null;
+        }
     }
 
     @Override

@@ -28,6 +28,7 @@
 #include "gba/flash_internal.h"
 #include "platform/dma.h"
 #include "platform/framedraw.h"
+#include "platform/dualscreen.h"
 
 extern void (*const gIntrTable[])(void);
 
@@ -365,6 +366,8 @@ int main(int argc, char **argv)
 #endif
                         gIntrTable[4]();
                     REG_DISPSTAT &= ~INTR_FLAG_VBLANK;
+
+                    DualScreen_FrameHook();
 
                     SDL_SemPost(vBlankSemaphore);
 
