@@ -2976,9 +2976,10 @@ void BattlePutTextOnWindow(const u8 *text, u8 windowId)
         switch (windowId)
         {
         case B_WIN_ACTION_MENU:
-            // Erase the action menu's box art (right half of the textbox
-            // band); the prompt on the left stays.
-            FillBgTilemapBufferRect(0, 0, 16, 35, 14, 5, 0x11);
+            // Erase the action menu box entirely (frame included): blank the
+            // right half of the textbox band with the transparent tile. The
+            // prompt on the left stays.
+            FillBgTilemapBufferRect(0, 0, 15, 35, 17, 5, 0);
             CopyBgTilemapBufferToVram(0);
             return;
         case B_WIN_MOVE_NAME_1:

@@ -1535,7 +1535,9 @@ void ActionSelectionCreateCursorAt(u8 cursorPosition, u8 baseTileNum)
     u16 src[2];
 #ifdef PLATFORM_SDL2
     // The bottom screen renders the action menu; keep the top screen clean.
-    if (DualScreen_BattleUiActive() && DualScreen_PlayerAtActionSelect())
+    // (Checked via inBattle rather than the controller state because the
+    // cursor is first drawn before the input handler is installed.)
+    if (DualScreen_BattleUiActive() && gMain.inBattle)
         return;
 #endif
     src[0] = 1;
@@ -1548,6 +1550,12 @@ void ActionSelectionCreateCursorAt(u8 cursorPosition, u8 baseTileNum)
 void ActionSelectionDestroyCursorAt(u8 cursorPosition)
 {
     u16 src[2];
+#ifdef PLATFORM_SDL2
+    // See ActionSelectionCreateCursorAt: the menu area is blanked, so
+    // repainting its background tile would leave visible chunks.
+    if (DualScreen_BattleUiActive() && gMain.inBattle)
+        return;
+#endif
     src[0] = 0x1016;
     src[1] = 0x1016;
 
