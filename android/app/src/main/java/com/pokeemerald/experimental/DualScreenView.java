@@ -21,7 +21,7 @@ public final class DualScreenView extends View {
     public static final int TAB_BAG = 2;
     public static final int TAB_CARD = 3;
     public static final int TAB_SETTINGS = 4;
-    private static final String[] TAB_NAMES = {"PARTY", "MAP", "BAG", "CARD", "SET"};
+    private static final String[] TAB_NAMES = {"PARTY", "MAP", "BAG", "CARD", null}; // null = cog icon
 
     private static final String[] TYPE_NAMES = {
         "NORMAL", "FIGHT", "FLYING", "POISON", "GROUND", "ROCK", "BUG", "GHOST",
@@ -256,7 +256,25 @@ public final class DualScreenView extends View {
             RectF r = tabRect(i);
             r.inset(6, 7);
             drawBar(canvas, r, i == tab, TAB_NAMES[i], scale);
+            if (TAB_NAMES[i] == null) {
+                drawCog(canvas, r.centerX(), r.centerY(), r.height() * 0.28f, TEXT_DARK);
+            }
         }
+    }
+
+    private void drawCog(Canvas canvas, float cx, float cy, float radius, int color) {
+        paint.setColor(color);
+        for (int t = 0; t < 8; t++) {
+            double angle = Math.PI * 2 * t / 8;
+            int save = canvas.save();
+            canvas.rotate((float) Math.toDegrees(angle), cx, cy);
+            canvas.drawRect(cx - radius * 0.18f, cy - radius * 1.35f,
+                    cx + radius * 0.18f, cy - radius * 0.5f, paint);
+            canvas.restoreToCount(save);
+        }
+        canvas.drawCircle(cx, cy, radius, paint);
+        paint.setColor(BAR_CREAM);
+        canvas.drawCircle(cx, cy, radius * 0.45f, paint);
     }
 
     private void drawCenteredMessage(Canvas canvas, String message) {
@@ -527,7 +545,9 @@ public final class DualScreenView extends View {
                     drawBar(canvas, cell, active, null, scale);
                     DualScreenState.Move move = self.moves.get(i);
                     float inset = cellH * 0.16f;
-                    f.draw(canvas, move.name, cell.left + inset, cell.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
+                    float nameScale = scale * 1.5f;
+                    f.draw(canvas, move.name, cell.left + inset, cell.top + cellH * 0.22f,
+                            nameScale, TEXT_DARK, TEXT_SHADOW);
                     drawTypeBadge(canvas, move.type, cell.left + inset,
                             cell.bottom - inset - cellH * 0.16f, cellH * 0.16f);
                     String pp = "PP " + move.pp + "/" + move.maxPp;
