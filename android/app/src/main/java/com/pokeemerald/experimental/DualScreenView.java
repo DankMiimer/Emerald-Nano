@@ -464,25 +464,21 @@ public final class DualScreenView extends View {
 
         DualScreenState.Mon enemy = state.battleEnemyMon;
         DualScreenState.Mon self = state.battlePlayerMon;
-        float cardH = contentHeight * 0.24f;
-        float gridTop;
+        float gridTop = pad;
 
-        RectF enemyRect = new RectF(pad, pad, getWidth() - pad, pad + cardH);
-        if (enemy != null) {
-            drawBattleMonCard(canvas, enemy, enemyRect,
-                    state.battleKind == 1 ? "FOE " : "WILD ", scale);
-        }
-
-        if (state.battleMenu == 2) {
-            gridTop = enemyRect.bottom + pad;
-        } else {
+        if (state.battleMenu == 0) {
+            // Idle: two big matching cards fill the screen.
+            float cardH = (contentHeight - pad * 3) / 2;
+            float cardScale = scale * 1.5f;
+            RectF enemyRect = new RectF(pad, pad, getWidth() - pad, pad + cardH);
+            if (enemy != null) {
+                drawBattleMonCard(canvas, enemy, enemyRect,
+                        state.battleKind == 1 ? "FOE " : "WILD ", cardScale);
+            }
             RectF selfRect = new RectF(pad, enemyRect.bottom + pad,
                     getWidth() - pad, enemyRect.bottom + pad + cardH);
-            drawBattleMonCard(canvas, self, selfRect, "", scale);
-            gridTop = selfRect.bottom + pad;
-            if (state.battleMenu == 0) {
-                return; // idle: just the two cards
-            }
+            drawBattleMonCard(canvas, self, selfRect, "", cardScale);
+            return;
         }
 
         if (state.battleMenu == 1) {
@@ -503,10 +499,11 @@ public final class DualScreenView extends View {
                 inner.inset(5, 5);
                 paint.setColor(colors[i]);
                 canvas.drawRoundRect(inner, 10, 10, paint);
-                float w = f.measure(labels[i], scale * 1.25f);
+                float labelScale = scale * 1.8f;
+                float w = f.measure(labels[i], labelScale);
                 f.draw(canvas, labels[i], cell.centerX() - w / 2,
-                        cell.centerY() - GbaFont.LINE_HEIGHT * scale * 1.25f / 2,
-                        scale * 1.25f, TEXT_WHITE, borders[i]);
+                        cell.centerY() - GbaFont.LINE_HEIGHT * labelScale / 2,
+                        labelScale, TEXT_WHITE, borders[i]);
             }
         } else {
             // Move grid: interactive during move select, dimmed otherwise.
