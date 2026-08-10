@@ -62,7 +62,9 @@ static char sConfigPath[1024] = "pokeemerald.cfg";
 static u8 sBorderBackground;
 static bool sHasBorderBackgroundConfig;
 static u8 sBackgroundOrderVersion;
-static u8 sPlatformSettings[PLATFORM_SETTING_COUNT] = {0, 4, 0, 1, 1, 10, 0, 0, 1};
+// Dual-screen defaults: black background, touch controls hidden, battle
+// menus on the bottom screen.
+static u8 sPlatformSettings[PLATFORM_SETTING_COUNT] = {0, 4, 0, 1, 1, 10, 1, 0, 0, 0};
 #ifdef __ANDROID__
 static SDL_GameController *androidController;
 #endif
@@ -478,6 +480,8 @@ static void ReadConfigFile(void)
             sPlatformSettings[PLATFORM_SETTING_WIDESCREEN] = value != 0;
         else if (sscanf(line, "touchControls=%u", &value) == 1)
             sPlatformSettings[PLATFORM_SETTING_TOUCH_CONTROLS] = value != 0;
+        else if (sscanf(line, "battleUiTop=%u", &value) == 1)
+            sPlatformSettings[PLATFORM_SETTING_BATTLE_UI_TOP] = value != 0;
     }
     fclose(configFile);
 }
@@ -499,6 +503,7 @@ static void StoreConfigFile(void)
     fprintf(configFile, "backgroundMode=%u\n", sPlatformSettings[PLATFORM_SETTING_BACKGROUND_MODE]);
     fprintf(configFile, "widescreen=%u\n", sPlatformSettings[PLATFORM_SETTING_WIDESCREEN]);
     fprintf(configFile, "touchControls=%u\n", sPlatformSettings[PLATFORM_SETTING_TOUCH_CONTROLS]);
+    fprintf(configFile, "battleUiTop=%u\n", sPlatformSettings[PLATFORM_SETTING_BATTLE_UI_TOP]);
     fclose(configFile);
 }
 

@@ -1904,3 +1904,17 @@ static void CreateTrainerCardTrainerPic(void)
                     WIN_TRAINER_PIC);
     }
 }
+
+#ifdef PLATFORM_SDL2
+// Accessors for the dual-screen bridge: the bottom screen renders the real
+// badge sprites from the same data the trainer card uses.
+const u16 *DualScreen_GetBadgesPal(void)
+{
+    return sHoennTrainerCardBadges_Pal;
+}
+
+const u32 *DualScreen_GetBadgesGfxLZ(void)
+{
+    return sHoennTrainerCardBadges_Gfx;
+}
+#endif

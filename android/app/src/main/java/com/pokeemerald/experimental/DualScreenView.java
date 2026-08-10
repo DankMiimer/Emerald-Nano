@@ -851,6 +851,7 @@ public final class DualScreenView extends View {
         new SettingRow("BACKGROUND", DualScreenBridge.SETTING_BACKGROUND_MODE, "ART", "BLACK", "WHITE"),
         new SettingRow("WIDESCREEN", DualScreenBridge.SETTING_WIDESCREEN, "OFF", "ON"),
         new SettingRow("TOUCH CONTROLS", DualScreenBridge.SETTING_TOUCH_CONTROLS, "OFF", "ON"),
+        new SettingRow("BATTLE MENUS", DualScreenBridge.SETTING_BATTLE_UI_TOP, "BOTTOM", "TOP"),
     };
 
     private void handleSettingsTouch(float x, float y) {
@@ -910,62 +911,151 @@ public final class DualScreenView extends View {
                 scale * 0.85f, TEXT_DARK, TEXT_SHADOW);
     }
 
+    private Bitmap[] badgeSprites;
+    private Bitmap trainerPic;
+    private int trainerPicGender = -1;
+
+    private void ensureCardAssets() {
+        if (badgeSprites == null) {
+            int[] pixels = DualScreenBridge.nativeGetBadges();
+            if (pixels != null && pixels.length == 8 * 256) {
+                badgeSprites = new Bitmap[8];
+                for (int i = 0; i < 8; i++) {
+                    int[] one = new int[256];
+                    System.arraycopy(pixels, i * 256, one, 0, 256);
+                    badgeSprites[i] = Bitmap.createBitmap(one, 16, 16, Bitmap.Config.ARGB_8888);
+                }
+            }
+        }
+        if (trainerPic == null || trainerPicGender != state.playerGender) {
+            int[] pixels = DualScreenBridge.nativeGetTrainerPic(state.playerGender);
+            if (pixels != null && pixels.length == 64 * 64) {
+                trainerPic = Bitmap.createBitmap(pixels, 64, 64, Bitmap.Config.ARGB_8888);
+                trainerPicGender = state.playerGender;
+            }
+        }
+    }
+
     private void drawTrainerCard(Canvas canvas) {
         GbaFont f = font();
         if (f == null) {
             return;
         }
+        ensureCardAssets();
         float contentHeight = getHeight() - tabBarHeight();
-        float pad = getWidth() * 0.05f;
-        float scale = getWidth() / 400f;
-        RectF card = new RectF(pad, pad, getWidth() - pad, contentHeight - pad);
+        float pad = getWidth() * 0.04f;
+        float scale = getWidth() / 420f;
+        RectF card = new RectF(pad, pad * 1.5f, getWidth() - pad, contentHeight - pad * 1.5f);
 
-        paint.setColor(0xFF48A868);
-        canvas.drawRoundRect(card, 18, 18, paint);
-        paint.setColor(0xFF389858);
-        canvas.drawRect(new RectF(card.left, card.top + card.height() * 0.28f,
-                card.right, card.top + card.height() * 0.30f), paint);
-        paint.setColor(0xFFF8F8F8);
-        RectF inner = new RectF(card.left + card.width() * 0.06f, card.top + card.height() * 0.36f,
-                card.right - card.width() * 0.06f, card.bottom - card.height() * 0.08f);
-        canvas.drawRoundRect(inner, 10, 10, paint);
+        // Card body color follows the earned stars, like the real card.
+        int[] bodyA = {0xFF98D8B0, 0xFFC8B890, 0xFFC8C8D0, 0xFFF8E888, 0xFFF8E888};
+        int[] bodyB = {0xFFB8E8C8, 0xFFD8CCA8, 0xFFDCDCE4, 0xFFFFF4A8, 0xFFFFF4A8};
+        int[] border = {0xFF58A878, 0xFF988858, 0xFF888898, 0xFFB09838, 0xFFB09838};
+        int tier = Math.min(state.stars, 4);
 
-        f.draw(canvas, "TRAINER CARD", card.left + card.width() * 0.06f,
-                card.top + card.height() * 0.07f, scale * 0.9f, TEXT_WHITE, TEXT_GREEN_SHADOW);
-        f.draw(canvas, state.playerName, card.left + card.width() * 0.06f,
-                card.top + card.height() * 0.16f, scale * 1.15f, TEXT_WHITE, TEXT_GREEN_SHADOW);
+        paint.setColor(border[tier]);
+        canvas.drawRoundRect(card, 24, 24, paint);
+        RectF body = new RectF(card);
+        body.inset(6, 6);
+        int save = canvas.save();
+        android.graphics.Path clip = new android.graphics.Path();
+        clip.addRoundRect(body, 20, 20, android.graphics.Path.Direction.CW);
+        canvas.clipPath(clip);
+        float stripeH = body.height() / 14f;
+        for (int i = 0; i < 15; i++) {
+            paint.setColor(i % 2 == 0 ? bodyA[tier] : bodyB[tier]);
+            canvas.drawRect(body.left, body.top + i * stripeH, body.right,
+                    body.top + (i + 1) * stripeH, paint);
+        }
 
-        float lineX = inner.left + inner.width() * 0.06f;
-        float valueX = inner.left + inner.width() * 0.52f;
-        float lineY = inner.top + inner.height() * 0.10f;
-        float lineStep = inner.height() * 0.21f;
+        float inset = body.width() * 0.045f;
+
+        // Title chip + ID number.
+        RectF chip = new RectF(body.left + inset, body.top + inset,
+                body.left + inset + f.measure("TRAINER CARD", scale) + 40,
+                body.top + inset + GbaFont.LINE_HEIGHT * scale + 16);
+        paint.setColor(0xFF68A8E0);
+        canvas.drawRoundRect(chip, 8, 8, paint);
+        f.draw(canvas, "TRAINER CARD", chip.left + 20, chip.top + 8, scale, TEXT_DARK, 0xFF4880B8);
+        f.draw(canvas, "IDNo." + String.format("%05d", state.trainerId),
+                body.right - inset - f.measure("IDNo.00000", scale), chip.top + 8,
+                scale, TEXT_DARK, TEXT_SHADOW);
+
+        // Trainer portrait, right side.
+        float picSize = body.height() * 0.42f;
+        if (trainerPic != null) {
+            RectF picRect = new RectF(body.right - inset - picSize,
+                    body.centerY() - picSize * 0.55f,
+                    body.right - inset, body.centerY() - picSize * 0.55f + picSize);
+            paint.setColor(bodyB[tier]);
+            canvas.drawCircle(picRect.centerX(), picRect.centerY(), picSize * 0.62f, paint);
+            paint.setColor(border[tier]);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(4);
+            canvas.drawCircle(picRect.centerX(), picRect.centerY(), picSize * 0.62f, paint);
+            paint.setStyle(Paint.Style.FILL);
+            canvas.drawBitmap(trainerPic, null, picRect, pixelPaint);
+        }
+
+        // Name with underline and stars.
+        float nameY = chip.bottom + body.height() * 0.075f;
+        f.draw(canvas, "NAME: " + state.playerName, body.left + inset, nameY,
+                scale * 1.1f, TEXT_DARK, TEXT_SHADOW);
+        float underlineY = nameY + GbaFont.LINE_HEIGHT * scale * 1.1f + 6;
+        paint.setColor(0xAA606060);
+        canvas.drawRect(body.left + inset, underlineY, body.left + body.width() * 0.55f,
+                underlineY + 4, paint);
+        for (int i = 0; i < state.stars; i++) {
+            drawStar(canvas, body.left + body.width() * 0.38f + i * scale * 16,
+                    underlineY + scale * 9, scale * 6, 0xFFE8B020);
+        }
+
+        // Info rows, values right-aligned like the real card.
         String[][] rowsData = {
             {"MONEY", "$" + state.money},
+            {"POKéDEX", Integer.toString(state.dexCaught)},
             {"TIME", state.hours + ":" + String.format("%02d", state.minutes)},
-            {"POKéDEX", state.dexCaught + " / " + state.dexSeen + " seen"},
-            {"PLACE", state.mapName},
         };
+        float rowY = underlineY + body.height() * 0.06f;
+        float rowStep = body.height() * 0.135f;
+        float valueRight = body.left + body.width() * 0.55f;
         for (int i = 0; i < rowsData.length; i++) {
-            f.draw(canvas, rowsData[i][0], lineX, lineY + i * lineStep, scale, TEXT_DARK, TEXT_SHADOW);
-            f.draw(canvas, rowsData[i][1], valueX, lineY + i * lineStep, scale, TEXT_DARK, TEXT_SHADOW);
+            f.draw(canvas, rowsData[i][0], body.left + inset, rowY + i * rowStep,
+                    scale, TEXT_DARK, TEXT_SHADOW);
+            float w = f.measure(rowsData[i][1], scale);
+            f.draw(canvas, rowsData[i][1], valueRight - w, rowY + i * rowStep,
+                    scale, TEXT_DARK, TEXT_SHADOW);
         }
 
-        // Badge dots along the bottom of the inner card, one per gym.
-        float dotR = inner.height() * 0.045f;
-        float dotsY = inner.bottom - dotR * 2.2f;
-        float dotStep = inner.width() * 0.09f;
-        float dotsX = inner.left + inner.width() * 0.06f + dotR;
+        // BADGES stripe with the real sprites.
+        float badgesY = body.bottom - body.height() * 0.20f;
+        f.draw(canvas, "BADGES", body.left + inset, badgesY - GbaFont.LINE_HEIGHT * scale * 0.85f - 6,
+                scale * 0.85f, TEXT_WHITE, border[tier]);
+        float badgeSize = body.height() * 0.145f;
+        float badgeStep = (body.width() - inset * 2) / 8f;
         for (int i = 0; i < 8; i++) {
-            boolean earned = (state.badgeFlags & (1 << i)) != 0;
-            paint.setColor(earned ? 0xFFE8B830 : 0xFFD8D8D0);
-            canvas.drawCircle(dotsX + i * dotStep, dotsY, dotR, paint);
-            if (earned) {
-                paint.setColor(0xFFB08820);
-                paint.setStyle(Paint.Style.STROKE);
-                paint.setStrokeWidth(3);
-                canvas.drawCircle(dotsX + i * dotStep, dotsY, dotR, paint);
-                paint.setStyle(Paint.Style.FILL);
+            if ((state.badgeFlags & (1 << i)) == 0 || badgeSprites == null) {
+                continue;
             }
+            float cx = body.left + inset + badgeStep * i + badgeStep / 2;
+            canvas.drawBitmap(badgeSprites[i], null,
+                    new RectF(cx - badgeSize / 2, badgesY, cx + badgeSize / 2, badgesY + badgeSize),
+                    pixelPaint);
         }
+        canvas.restoreToCount(save);
+    }
+
+    private void drawStar(Canvas canvas, float cx, float cy, float r, int color) {
+        android.graphics.Path path = new android.graphics.Path();
+        for (int i = 0; i < 10; i++) {
+            double angle = -Math.PI / 2 + i * Math.PI / 5;
+            float radius = (i % 2 == 0) ? r : r * 0.45f;
+            float x = cx + (float) Math.cos(angle) * radius;
+            float y = cy + (float) Math.sin(angle) * radius;
+            if (i == 0) path.moveTo(x, y); else path.lineTo(x, y);
+        }
+        path.close();
+        paint.setColor(color);
+        canvas.drawPath(path, paint);
     }
 }

@@ -19,6 +19,7 @@
 #include "global.h"
 #include "fonts.h"
 #include "main.h"
+#include "platform.h"
 #include "pokemon.h"
 #include "pokemon_icon.h"
 #include "battle.h"
@@ -39,6 +40,9 @@
 #include "constants/items.h"
 #include "constants/pokemon.h"
 #include "constants/region_map_sections.h"
+#include "constants/trainers.h"
+
+extern u32 CountPlayerTrainerStars(void);
 
 #define SNAPSHOT_CAPACITY 24576
 #define SNAPSHOT_FRAME_INTERVAL 8
@@ -56,6 +60,9 @@ static int sVirtualKeyCount;
 
 u32 DualScreen_BattleUiActive(void)
 {
+    // User preference: keep the classic top-screen battle menus.
+    if (Platform_GetSetting(PLATFORM_SETTING_BATTLE_UI_TOP))
+        return FALSE;
     // Battles with nonstandard menus (Safari's BALL/BAIT/ROCK, Wally's
     // scripted tutorial) or strict timing (link) keep the classic top-screen
     // UI; the bottom screen then just shows the status cards.
@@ -471,6 +478,10 @@ static void BuildSnapshot(char *buffer, int capacity)
             JsonPut(w, "\"badgeFlags\":%d,\"dexSeen\":%u,\"dexCaught\":%u,",
                     badgeFlags, GetHoennPokedexCount(FLAG_GET_SEEN),
                     GetHoennPokedexCount(FLAG_GET_CAUGHT));
+            JsonPut(w, "\"trainerId\":%u,\"stars\":%u,",
+                    (unsigned)(gSaveBlock2Ptr->playerTrainerId[0]
+                             | (gSaveBlock2Ptr->playerTrainerId[1] << 8)),
+                    (unsigned)CountPlayerTrainerStars());
         }
         JsonPut(w, "\"gender\":%d,\"money\":%u,\"badges\":%d,",
                 gSaveBlock2Ptr->playerGender, (unsigned)GetMoney(&gSaveBlock1Ptr->money), badges);
@@ -719,6 +730,83 @@ JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_n
     if (result != NULL)
         (*env)->SetIntArrayRegion(env, result, 0, total, data);
     free(data);
+    return result;
+}
+
+// Implemented in trainer_card.c: the trainer card badge graphics.
+extern const u16 *DualScreen_GetBadgesPal(void);
+extern const u32 *DualScreen_GetBadgesGfxLZ(void);
+
+// All eight badge sprites as ARGB: 8 badges x 16x16 pixels, badge-major.
+JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetBadges(JNIEnv *env, jclass clazz)
+{
+    static u8 sGfx[2048];
+    const u16 *pal = DualScreen_GetBadgesPal();
+    jint pixels[8 * 16 * 16];
+    jintArray result;
+    int badge, tile, py, px;
+
+    LZ77UnCompWram(DualScreen_GetBadgesGfxLZ(), sGfx);
+
+    // 128x16 sheet: 16 tile columns x 2 tile rows; badge i is columns 2i,2i+1.
+    for (badge = 0; badge < 8; badge++)
+    for (tile = 0; tile < 4; tile++)
+    {
+        int tileCol = badge * 2 + (tile & 1);
+        int tileRow = tile >> 1;
+        const u8 *src = &sGfx[(tileRow * 16 + tileCol) * 32];
+        jint *out = &pixels[badge * 256];
+        for (py = 0; py < 8; py++)
+        for (px = 0; px < 8; px++)
+        {
+            u8 packed = src[py * 4 + px / 2];
+            u8 colorIndex = (px & 1) ? (packed >> 4) : (packed & 0xF);
+            int x = (tile & 1) * 8 + px;
+            int y = tileRow * 8 + py;
+            out[y * 16 + x] = colorIndex == 0 ? 0 : Bgr555ToArgb(pal[colorIndex]);
+        }
+    }
+
+    result = (*env)->NewIntArray(env, 8 * 16 * 16);
+    if (result != NULL)
+        (*env)->SetIntArrayRegion(env, result, 0, 8 * 16 * 16, pixels);
+    return result;
+}
+
+// The player's 64x64 trainer front pic as ARGB pixels.
+JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetTrainerPic(JNIEnv *env, jclass clazz, jint gender)
+{
+    static u8 sGfx[4096];
+    static u16 sPal[16];
+    int picId = gender == 1 ? TRAINER_PIC_MAY : TRAINER_PIC_BRENDAN;
+    jint *pixels;
+    jintArray result;
+    int tileCol, tileRow, py, px;
+
+    LZ77UnCompWram(gTrainerFrontPicTable[picId].data, sGfx);
+    LZ77UnCompWram(gTrainerFrontPicPaletteTable[picId].data, sPal);
+
+    pixels = malloc(64 * 64 * sizeof(jint));
+    if (pixels == NULL)
+        return NULL;
+    for (tileRow = 0; tileRow < 8; tileRow++)
+    for (tileCol = 0; tileCol < 8; tileCol++)
+    {
+        const u8 *src = &sGfx[(tileRow * 8 + tileCol) * 32];
+        for (py = 0; py < 8; py++)
+        for (px = 0; px < 8; px++)
+        {
+            u8 packed = src[py * 4 + px / 2];
+            u8 colorIndex = (px & 1) ? (packed >> 4) : (packed & 0xF);
+            pixels[(tileRow * 8 + py) * 64 + tileCol * 8 + px] =
+                    colorIndex == 0 ? 0 : Bgr555ToArgb(sPal[colorIndex]);
+        }
+    }
+
+    result = (*env)->NewIntArray(env, 64 * 64);
+    if (result != NULL)
+        (*env)->SetIntArrayRegion(env, result, 0, 64 * 64, pixels);
+    free(pixels);
     return result;
 }
 

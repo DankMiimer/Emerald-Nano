@@ -57,6 +57,8 @@ public final class DualScreenState {
     public int badgeFlags;
     public int dexSeen;
     public int dexCaught;
+    public int trainerId;
+    public int stars;
     public int hours;
     public int minutes;
     public String mapName = "";
@@ -130,6 +132,8 @@ public final class DualScreenState {
                 state.badgeFlags = player.optInt("badgeFlags");
                 state.dexSeen = player.optInt("dexSeen");
                 state.dexCaught = player.optInt("dexCaught");
+                state.trainerId = player.optInt("trainerId");
+                state.stars = player.optInt("stars");
                 state.hours = player.optInt("hours");
                 state.minutes = player.optInt("minutes");
                 state.mapName = player.optString("mapName");

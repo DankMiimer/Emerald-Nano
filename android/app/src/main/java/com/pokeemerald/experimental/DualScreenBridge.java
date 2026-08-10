@@ -47,6 +47,13 @@ public final class DualScreenBridge {
     public static final int SETTING_BACKGROUND_MODE = 6;
     public static final int SETTING_WIDESCREEN = 7;
     public static final int SETTING_TOUCH_CONTROLS = 8;
+    public static final int SETTING_BATTLE_UI_TOP = 9;
+
+    /** All 8 badge sprites: 8 x 16x16 ARGB pixels, badge-major. */
+    public static native int[] nativeGetBadges();
+
+    /** The player's 64x64 trainer front pic (gender 0 = Brendan, 1 = May). */
+    public static native int[] nativeGetTrainerPic(int gender);
 
     public static native int nativeGetPlatformSetting(int setting);
 
