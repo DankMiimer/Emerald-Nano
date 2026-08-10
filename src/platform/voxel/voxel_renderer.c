@@ -541,14 +541,7 @@ void VoxelRenderer_RenderFrame(void)
     glColor3f(1.0f, 1.0f, 1.0f);
 
     extern void VoxelMesh_BuildWalls(int mapW, int mapH);
-    extern bool gVoxelWallConsumed[256][256];
     
-    for (int y = 0; y < 256; y++) {
-        for (int x = 0; x < 256; x++) {
-            gVoxelWallConsumed[y][x] = false;
-        }
-    }
-
     if (!gVoxelDebugFlatMode) {
         VoxelMesh_BuildWalls(mapW, mapH);
     }
@@ -595,8 +588,8 @@ void VoxelRenderer_RenderFrame(void)
                 glEnd();
                 glDisable(GL_BLEND);
             } else {
-                extern bool gVoxelWallConsumed[256][256];
-                if (!gVoxelWallConsumed[y][x]) {
+                extern bool *gVoxelWallConsumed;
+                if (!gVoxelWallConsumed || !gVoxelWallConsumed[y * 512 + x]) {
                     VoxelMesh_DrawTile(x, y, terrain, metatileId);
                 }
             }

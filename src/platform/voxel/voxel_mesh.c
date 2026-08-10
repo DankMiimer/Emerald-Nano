@@ -16,7 +16,6 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
         gVoxelWallConsumed = calloc(512 * 512, sizeof(bool));
     }
     
-    // Clear array up to actual map bounds
     if (gVoxelWallConsumed) {
         for (int y = 0; y < mapH; y++) {
             for (int x = 0; x < mapW; x++) {
@@ -27,9 +26,6 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
 
     float atlasW = 512.0f;
     float atlasH = 512.0f;
-    float thick = 0.1f;
-    float h = 1.8f;
-    float midH = h / 2.0f;
 
     for (int y = 0; y < mapH; y++) {
         for (int x = 0; x < mapW; x++) {
@@ -38,141 +34,93 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
             VoxelVisualShape shape = VoxelWorld_ClassifyTile(x, y);
 
             if (shape == VOXEL_SHAPE_WALL) {
-                // Determine facing direction
-                bool faceSouth = false;
-                bool faceEast = false;
-                bool faceWest = false;
+                // Find height of this vertical structure
+                int heightInTiles = 1;
+                while (y - heightInTiles >= 0) {
+                    VoxelVisualShape nShape = VoxelWorld_ClassifyTile(x, y - heightInTiles);
+                    if (nShape == VOXEL_SHAPE_WALL || nShape == VOXEL_SHAPE_WALL_TOP || nShape == VOXEL_SHAPE_VOID) {
+                        heightInTiles++;
+                        if (nShape == VOXEL_SHAPE_WALL_TOP || nShape == VOXEL_SHAPE_VOID) break; 
+                    } else {
+                        break;
+                    }
+                }
                 
                 VoxelVisualShape sS = VoxelWorld_ClassifyTile(x, y + 1);
+                VoxelVisualShape sN = VoxelWorld_ClassifyTile(x, y - heightInTiles);
                 VoxelVisualShape sE = VoxelWorld_ClassifyTile(x + 1, y);
                 VoxelVisualShape sW = VoxelWorld_ClassifyTile(x - 1, y);
-
-                if (sS != VOXEL_SHAPE_WALL && sS != VOXEL_SHAPE_WALL_TOP && sS != VOXEL_SHAPE_VOID) faceSouth = true;
-                if (sE != VOXEL_SHAPE_WALL && sE != VOXEL_SHAPE_WALL_TOP && sE != VOXEL_SHAPE_VOID) faceEast = true;
-                if (sW != VOXEL_SHAPE_WALL && sW != VOXEL_SHAPE_WALL_TOP && sW != VOXEL_SHAPE_VOID) faceWest = true;
                 
-                if (!faceSouth && !faceEast && !faceWest) faceSouth = true;
+                bool faceSouth = (sS != VOXEL_SHAPE_WALL && sS != VOXEL_SHAPE_WALL_TOP && sS != VOXEL_SHAPE_VOID);
+                bool faceNorth = (sN != VOXEL_SHAPE_WALL && sN != VOXEL_SHAPE_WALL_TOP && sN != VOXEL_SHAPE_VOID);
+                bool faceEast = (sE != VOXEL_SHAPE_WALL && sE != VOXEL_SHAPE_WALL_TOP && sE != VOXEL_SHAPE_VOID);
+                bool faceWest = (sW != VOXEL_SHAPE_WALL && sW != VOXEL_SHAPE_WALL_TOP && sW != VOXEL_SHAPE_VOID);
+                
+                if (!faceSouth && !faceEast && !faceWest && !faceNorth) faceSouth = true; 
                 
                 float wx = (float)x;
                 float wz = (float)y;
-                int lowerMeta = VoxelWorld_GetMetatileId(x, y);
-                int upperMeta = VoxelWorld_GetMetatileId(x, y - 1);
+                float totalH = heightInTiles * 1.0f;
                 
-                float u0 = (lowerMeta % 32) * 16.0f / atlasW;
-                float v0 = (lowerMeta / 32) * 16.0f / atlasH;
-                float u1 = u0 + (16.0f / atlasW);
-                float v1 = v0 + (16.0f / atlasH);
+                for (int i = 0; i < heightInTiles; i++) {
+                    gVoxelWallConsumed[(y - i) * 512 + x] = true;
+                }
 
-                float t_u0 = (upperMeta % 32) * 16.0f / atlasW;
-                float t_v0 = (upperMeta / 32) * 16.0f / atlasH;
+                int topTileY = y - heightInTiles + 1;
+                int topM = VoxelWorld_GetMetatileId(x, topTileY);
+                float t_u0 = (topM % 32) * 16.0f / atlasW;
+                float t_v0 = (topM / 32) * 16.0f / atlasH;
                 float t_u1 = t_u0 + (16.0f / atlasW);
                 float t_v1 = t_v0 + (16.0f / atlasH);
 
-                gVoxelWallConsumed[y * 512 + x] = true;
-                if (y - 1 >= 0) gVoxelWallConsumed[(y - 1) * 512 + x] = true;
-                if (y - 2 >= 0) {
-                    VoxelVisualShape capShape = VoxelWorld_ClassifyTile(x, y - 2);
-                    if (capShape == VOXEL_SHAPE_WALL_TOP || capShape == VOXEL_SHAPE_VOID) {
-                        gVoxelWallConsumed[(y - 2) * 512 + x] = true;
-                    }
-                }
-
                 glEnable(GL_TEXTURE_2D);
                 glColor3f(1.0f, 1.0f, 1.0f);
-
-                if (faceSouth) {
-                    float zBack = wz + 1.0f - thick;
-                    float zFront = wz + 1.0f;
-
-                    glBegin(GL_QUADS);
-                    // Lower Front Face
-                    glTexCoord2f(u0, v1); glVertex3f(wx,      0.0f, zFront);
-                    glTexCoord2f(u1, v1); glVertex3f(wx+1.0f, 0.0f, zFront);
-                    glTexCoord2f(u1, v0); glVertex3f(wx+1.0f, midH, zFront);
-                    glTexCoord2f(u0, v0); glVertex3f(wx,      midH, zFront);
-                    
-                    // Upper Front Face
-                    glTexCoord2f(t_u0, t_v1); glVertex3f(wx,      midH, zFront);
-                    glTexCoord2f(t_u1, t_v1); glVertex3f(wx+1.0f, midH, zFront);
-                    glTexCoord2f(t_u1, t_v0); glVertex3f(wx+1.0f, h,    zFront);
-                    glTexCoord2f(t_u0, t_v0); glVertex3f(wx,      h,    zFront);
-                    glEnd();
-                    
-                    glDisable(GL_TEXTURE_2D);
-                    glColor3f(0.2f, 0.2f, 0.2f);
-                    glBegin(GL_QUADS);
-                    glVertex3f(wx,      0.0f, wz);
-                    glVertex3f(wx+1.0f, 0.0f, wz);
-                    glVertex3f(wx+1.0f, 0.0f, wz+1.0f);
-                    glVertex3f(wx,      0.0f, wz+1.0f);
-                    glEnd();
-                    glEnable(GL_TEXTURE_2D);
-                    glColor3f(1.0f, 1.0f, 1.0f);
-                }
                 
-                if (faceEast) {
-                    float xBack = wx + 1.0f - thick;
-                    float xFront = wx + 1.0f;
+                // TOP FACE (Textured with top-most tile)
+                glBegin(GL_QUADS);
+                glTexCoord2f(t_u0, t_v0); glVertex3f(wx,      totalH, wz);
+                glTexCoord2f(t_u1, t_v0); glVertex3f(wx+1.0f, totalH, wz);
+                glTexCoord2f(t_u1, t_v1); glVertex3f(wx+1.0f, totalH, wz+1.0f);
+                glTexCoord2f(t_u0, t_v1); glVertex3f(wx,      totalH, wz+1.0f);
+                glEnd();
 
-                    glBegin(GL_QUADS);
-                    // Lower Front Face (mapped with side texture)
-                    glTexCoord2f(u0, v1); glVertex3f(xFront, 0.0f, wz+1.0f);
-                    glTexCoord2f(u1, v1); glVertex3f(xFront, 0.0f, wz);
-                    glTexCoord2f(u1, v0); glVertex3f(xFront, midH, wz);
-                    glTexCoord2f(u0, v0); glVertex3f(xFront, midH, wz+1.0f);
+                glBegin(GL_QUADS);
+                for (int i = 0; i < heightInTiles; i++) {
+                    int m = VoxelWorld_GetMetatileId(x, y - i);
+                    float u0 = (m % 32) * 16.0f / atlasW;
+                    float v0 = (m / 32) * 16.0f / atlasH;
+                    float u1 = u0 + (16.0f / atlasW);
+                    float v1 = v0 + (16.0f / atlasH);
                     
-                    // Upper Front Face
-                    glTexCoord2f(t_u0, t_v1); glVertex3f(xFront, midH, wz+1.0f);
-                    glTexCoord2f(t_u1, t_v1); glVertex3f(xFront, midH, wz);
-                    glTexCoord2f(t_u1, t_v0); glVertex3f(xFront, h,    wz);
-                    glTexCoord2f(t_u0, t_v0); glVertex3f(xFront, h,    wz+1.0f);
-                    glEnd();
+                    float yBottom = i * 1.0f;
+                    float yTop = (i + 1) * 1.0f;
                     
-                    glDisable(GL_TEXTURE_2D);
-                    glColor3f(0.2f, 0.2f, 0.2f);
-                    glBegin(GL_QUADS);
-                    glVertex3f(xBack,  h, wz);
-                    glVertex3f(xFront, h, wz);
-                    glVertex3f(xFront, h, wz+1.0f);
-                    glVertex3f(xBack,  h, wz+1.0f);
-                    glEnd();
-                    
-                    glEnable(GL_TEXTURE_2D);
-                    glColor3f(1.0f, 1.0f, 1.0f);
+                    if (faceSouth) {
+                        glTexCoord2f(u0, v1); glVertex3f(wx,      yBottom, wz+1.0f);
+                        glTexCoord2f(u1, v1); glVertex3f(wx+1.0f, yBottom, wz+1.0f);
+                        glTexCoord2f(u1, v0); glVertex3f(wx+1.0f, yTop,    wz+1.0f);
+                        glTexCoord2f(u0, v0); glVertex3f(wx,      yTop,    wz+1.0f);
+                    }
+                    if (faceNorth) {
+                        glTexCoord2f(u1, v1); glVertex3f(wx,      yBottom, wz);
+                        glTexCoord2f(u0, v1); glVertex3f(wx+1.0f, yBottom, wz);
+                        glTexCoord2f(u0, v0); glVertex3f(wx+1.0f, yTop,    wz);
+                        glTexCoord2f(u1, v0); glVertex3f(wx,      yTop,    wz);
+                    }
+                    if (faceEast) {
+                        glTexCoord2f(u0, v1); glVertex3f(wx+1.0f, yBottom, wz+1.0f);
+                        glTexCoord2f(u1, v1); glVertex3f(wx+1.0f, yBottom, wz);
+                        glTexCoord2f(u1, v0); glVertex3f(wx+1.0f, yTop,    wz);
+                        glTexCoord2f(u0, v0); glVertex3f(wx+1.0f, yTop,    wz+1.0f);
+                    }
+                    if (faceWest) {
+                        glTexCoord2f(u1, v1); glVertex3f(wx, yBottom, wz+1.0f);
+                        glTexCoord2f(u0, v1); glVertex3f(wx, yBottom, wz);
+                        glTexCoord2f(u0, v0); glVertex3f(wx, yTop,    wz);
+                        glTexCoord2f(u1, v0); glVertex3f(wx, yTop,    wz+1.0f);
+                    }
                 }
-                
-                if (faceWest) {
-                    float xBack = wx + thick;
-                    float xFront = wx;
-
-                    glBegin(GL_QUADS);
-                    // Lower Front Face (mapped with side texture)
-                    glTexCoord2f(u0, v1); glVertex3f(xFront, 0.0f, wz);
-                    glTexCoord2f(u1, v1); glVertex3f(xFront, 0.0f, wz+1.0f);
-                    glTexCoord2f(u1, v0); glVertex3f(xFront, midH, wz+1.0f);
-                    glTexCoord2f(u0, v0); glVertex3f(xFront, midH, wz);
-                    
-                    // Upper Front Face
-                    glTexCoord2f(t_u0, t_v1); glVertex3f(xFront, midH, wz);
-                    glTexCoord2f(t_u1, t_v1); glVertex3f(xFront, midH, wz+1.0f);
-                    glTexCoord2f(t_u1, t_v0); glVertex3f(xFront, h,    wz+1.0f);
-                    glTexCoord2f(t_u0, t_v0); glVertex3f(xFront, h,    wz);
-                    glEnd();
-                    
-                    glDisable(GL_TEXTURE_2D);
-                    glColor3f(0.2f, 0.2f, 0.2f);
-                    glBegin(GL_QUADS);
-                    glVertex3f(xFront, h, wz);
-                    glVertex3f(xBack,  h, wz);
-                    glVertex3f(xBack,  h, wz+1.0f);
-                    glVertex3f(xFront, h, wz+1.0f);
-                    glEnd();
-                    
-                    glEnable(GL_TEXTURE_2D);
-                    glColor3f(1.0f, 1.0f, 1.0f);
-                }
-                
-                glDisable(GL_TEXTURE_2D);
+                glEnd();
             }
         }
     }
