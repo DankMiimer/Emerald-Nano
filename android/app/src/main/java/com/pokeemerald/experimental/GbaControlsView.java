@@ -139,8 +139,15 @@ public final class GbaControlsView extends View {
         invalidate();
     }
 
+    private boolean touchControlsEnabled() {
+        return getPlatformSetting(DualScreenBridge.SETTING_TOUCH_CONTROLS) != 0;
+    }
+
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        if (!touchControlsEnabled()) {
+            return false;
+        }
         if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
             setPressed(0);
             return true;
@@ -173,22 +180,34 @@ public final class GbaControlsView extends View {
     }
 
     private void drawBorder(Canvas canvas) {
-        int scale = Math.max(1, Math.min(getWidth() / 240, getHeight() / 160));
-        int gameWidth = 240 * scale;
-        int gameHeight = 160 * scale;
+        if (getPlatformSetting(DualScreenBridge.SETTING_WIDESCREEN) != 0) {
+            return; // game fills the whole surface; nothing to frame
+        }
+        // SDL letterboxes via its 240x160 logical size (non-integer scale),
+        // so mask exactly the letterbox bars it leaves.
+        float sdlScale = Math.min(getWidth() / 240f, getHeight() / 160f);
+        int gameWidth = Math.round(240 * sdlScale);
+        int gameHeight = Math.round(160 * sdlScale);
         int gameX = (getWidth() - gameWidth) / 2;
         int gameY = (getHeight() - gameHeight) / 2;
+        int scale = Math.max(1, (int) sdlScale);
 
+        int backgroundMode = getPlatformSetting(DualScreenBridge.SETTING_BACKGROUND_MODE);
         int backgroundOption = getBorderBackground();
-        if (backgroundOption < backgroundCount && backgrounds[backgroundOption] != null) {
+        Rect[] regions = {
+                new Rect(0, 0, getWidth(), gameY),
+                new Rect(0, gameY + gameHeight, getWidth(), getHeight()),
+                new Rect(0, gameY, gameX, gameY + gameHeight),
+                new Rect(gameX + gameWidth, gameY, getWidth(), gameY + gameHeight)
+        };
+        if (backgroundMode != 0) {
+            fill.setColor(backgroundMode == 1 ? Color.BLACK : Color.WHITE);
+            for (Rect region : regions) {
+                canvas.drawRect(region, fill);
+            }
+        } else if (backgroundOption < backgroundCount && backgrounds[backgroundOption] != null) {
             Bitmap background = backgrounds[backgroundOption];
             Rect output = new Rect(0, 0, getWidth(), getHeight());
-            Rect[] regions = {
-                    new Rect(0, 0, getWidth(), gameY),
-                    new Rect(0, gameY + gameHeight, getWidth(), getHeight()),
-                    new Rect(0, gameY, gameX, gameY + gameHeight),
-                    new Rect(gameX + gameWidth, gameY, getWidth(), gameY + gameHeight)
-            };
             for (Rect region : regions) {
                 int state = canvas.save();
                 canvas.clipRect(region);
@@ -197,7 +216,7 @@ public final class GbaControlsView extends View {
             }
         }
 
-        if (getPlatformSetting(4) != 0 && border != null) {
+        if (getPlatformSetting(4) != 0 && backgroundMode == 0 && border != null) {
             int innerWidth = gameWidth - 2;
             int innerHeight = gameHeight - 2;
             canvas.drawBitmap(border, new Rect(141, 18, 1141, 701),
@@ -217,6 +236,9 @@ public final class GbaControlsView extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         drawBorder(canvas);
+        if (!touchControlsEnabled()) {
+            return;
+        }
         drawControl(canvas, UP, null);
         drawControl(canvas, DOWN, null);
         drawControl(canvas, LEFT, null);

@@ -17,11 +17,11 @@ import android.view.View;
  */
 public final class DualScreenView extends View {
     public static final int TAB_PARTY = 0;
-    public static final int TAB_BATTLE = 1;
-    public static final int TAB_MAP = 2;
-    public static final int TAB_BAG = 3;
-    public static final int TAB_CARD = 4;
-    private static final String[] TAB_NAMES = {"PARTY", "BATTLE", "MAP", "BAG", "CARD"};
+    public static final int TAB_MAP = 1;
+    public static final int TAB_BAG = 2;
+    public static final int TAB_CARD = 3;
+    public static final int TAB_SETTINGS = 4;
+    private static final String[] TAB_NAMES = {"PARTY", "MAP", "BAG", "CARD", "SET"};
 
     private static final String[] TYPE_NAMES = {
         "NORMAL", "FIGHT", "FLYING", "POISON", "GROUND", "ROCK", "BUG", "GHOST",
@@ -84,12 +84,14 @@ public final class DualScreenView extends View {
         pixelPaint.setFilterBitmap(false);
     }
 
+    private Runnable settingsListener;
+
+    public void setSettingsListener(Runnable listener) {
+        settingsListener = listener;
+    }
+
     public void setState(DualScreenState next) {
-        boolean autoBattle = next.inBattle && !state.inBattle;
-        boolean autoParty = !next.inBattle && state.inBattle && tab == TAB_BATTLE;
         state = next;
-        if (autoBattle) tab = TAB_BATTLE;
-        if (autoParty) tab = TAB_PARTY;
         invalidate();
     }
 
@@ -132,6 +134,10 @@ public final class DualScreenView extends View {
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            if (state.inBattle) {
+                handleBattleTouch(event.getX(), event.getY());
+                return true;
+            }
             for (int i = 0; i < TAB_NAMES.length; i++) {
                 if (tabRect(i).contains(event.getX(), event.getY())) {
                     tab = i;
@@ -148,8 +154,8 @@ public final class DualScreenView extends View {
                     }
                 }
             }
-            if (tab == TAB_BATTLE && state.inBattle) {
-                handleBattleTouch(event.getX(), event.getY());
+            if (tab == TAB_SETTINGS) {
+                handleSettingsTouch(event.getX(), event.getY());
             }
         }
         return true;
@@ -326,12 +332,17 @@ public final class DualScreenView extends View {
             drawTabBar(canvas);
             return;
         }
+        if (state.inBattle) {
+            // Battle takes over the whole bottom screen, Gen 4 style.
+            drawBattle(canvas);
+            return;
+        }
         switch (tab) {
-        case TAB_PARTY:  drawParty(canvas); break;
-        case TAB_BATTLE: drawBattle(canvas); break;
-        case TAB_MAP:    drawMap(canvas); break;
-        case TAB_BAG:    drawBag(canvas); break;
-        case TAB_CARD:   drawTrainerCard(canvas); break;
+        case TAB_PARTY:    drawParty(canvas); break;
+        case TAB_MAP:      drawMap(canvas); break;
+        case TAB_BAG:      drawBag(canvas); break;
+        case TAB_CARD:     drawTrainerCard(canvas); break;
+        case TAB_SETTINGS: drawSettings(canvas); break;
         }
         drawTabBar(canvas);
     }
@@ -400,7 +411,7 @@ public final class DualScreenView extends View {
             drawCenteredMessage(canvas, "Not in battle");
             return;
         }
-        float contentHeight = getHeight() - tabBarHeight();
+        float contentHeight = getHeight(); // battle owns the full screen
         float pad = getWidth() * 0.02f;
         float scale = getWidth() / 430f;
 
@@ -640,6 +651,82 @@ public final class DualScreenView extends View {
             f.draw(canvas, "+" + (items.size() - visible) + " more~", pad,
                     contentHeight - GbaFont.LINE_HEIGHT * scale - 4, scale * 0.85f, TEXT_DARK, TEXT_SHADOW);
         }
+    }
+
+    private static final class SettingRow {
+        final String label;
+        final int setting;
+        final String[] values;
+        final RectF rect = new RectF();
+
+        SettingRow(String label, int setting, String... values) {
+            this.label = label;
+            this.setting = setting;
+            this.values = values;
+        }
+    }
+
+    private final SettingRow[] settingRows = {
+        new SettingRow("BACKGROUND", DualScreenBridge.SETTING_BACKGROUND_MODE, "ART", "BLACK", "WHITE"),
+        new SettingRow("WIDESCREEN", DualScreenBridge.SETTING_WIDESCREEN, "OFF", "ON"),
+        new SettingRow("TOUCH CONTROLS", DualScreenBridge.SETTING_TOUCH_CONTROLS, "OFF", "ON"),
+    };
+
+    private void handleSettingsTouch(float x, float y) {
+        for (SettingRow row : settingRows) {
+            if (row.rect.contains(x, y)) {
+                int value = DualScreenBridge.nativeGetPlatformSetting(row.setting);
+                value = (value + 1) % row.values.length;
+                DualScreenBridge.nativeSetPlatformSetting(row.setting, value);
+                if (settingsListener != null) {
+                    settingsListener.run();
+                }
+                invalidate();
+                return;
+            }
+        }
+    }
+
+    private void drawSettings(Canvas canvas) {
+        GbaFont f = font();
+        if (f == null) {
+            return;
+        }
+        float contentHeight = getHeight() - tabBarHeight();
+        float pad = getWidth() * 0.03f;
+        float scale = getWidth() / 440f;
+
+        drawHeader(canvas, "SETTINGS", scale);
+        float headerBottom = GbaFont.LINE_HEIGHT * scale * 1.6f;
+
+        float rowH = (contentHeight - headerBottom - pad * 2) / 6f;
+        float top = headerBottom + pad;
+        for (SettingRow row : settingRows) {
+            RectF r = new RectF(pad, top, getWidth() - pad, top + rowH);
+            row.rect.set(r);
+            drawBar(canvas, r, false, null, scale);
+            float inset = rowH * 0.2f;
+            f.draw(canvas, row.label, r.left + inset,
+                    r.centerY() - GbaFont.LINE_HEIGHT * scale / 2, scale, TEXT_DARK, TEXT_SHADOW);
+
+            int value = DualScreenBridge.nativeGetPlatformSetting(row.setting);
+            String valueText = row.values[Math.min(value, row.values.length - 1)];
+            float chipScale = scale * 0.9f;
+            float chipTextW = f.measure(valueText, chipScale);
+            float chipH = rowH * 0.62f;
+            RectF chip = new RectF(r.right - inset - chipTextW - chipH,
+                    r.centerY() - chipH / 2, r.right - inset, r.centerY() + chipH / 2);
+            paint.setColor(HEADER_GREEN);
+            canvas.drawRoundRect(chip, 8, 8, paint);
+            f.draw(canvas, valueText, chip.centerX() - chipTextW / 2,
+                    chip.centerY() - GbaFont.LINE_HEIGHT * chipScale / 2,
+                    chipScale, TEXT_WHITE, TEXT_GREEN_SHADOW);
+            top += rowH + pad * 0.6f;
+        }
+
+        f.draw(canvas, "Tap a setting to change it.", pad,
+                contentHeight - GbaFont.LINE_HEIGHT * scale - pad,
+                scale * 0.85f, TEXT_DARK, TEXT_SHADOW);
     }
 
     private void drawTrainerCard(Canvas canvas) {

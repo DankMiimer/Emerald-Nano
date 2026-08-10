@@ -20,6 +20,9 @@ enum PlatformSetting
     PLATFORM_SETTING_VSYNC,
     PLATFORM_SETTING_BORDER,
     PLATFORM_SETTING_VOLUME,
+    PLATFORM_SETTING_BACKGROUND_MODE, // 0 artwork, 1 black, 2 white
+    PLATFORM_SETTING_WIDESCREEN,      // 0 aspect-correct, 1 stretch to fill
+    PLATFORM_SETTING_TOUCH_CONTROLS,  // 0 hidden, 1 shown (Android)
     PLATFORM_SETTING_COUNT,
 };
 

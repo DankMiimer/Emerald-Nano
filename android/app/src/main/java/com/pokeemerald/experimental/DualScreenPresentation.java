@@ -9,9 +9,17 @@ import android.view.ViewGroup;
 /** Hosts the DualScreenView on a secondary (bottom) display. */
 public final class DualScreenPresentation extends Presentation {
     private DualScreenView view;
+    private Runnable settingsListener;
 
     public DualScreenPresentation(Context context, Display display) {
         super(context, display);
+    }
+
+    public void setSettingsListener(Runnable listener) {
+        settingsListener = listener;
+        if (view != null) {
+            view.setSettingsListener(listener);
+        }
     }
 
     @Override
@@ -21,6 +29,7 @@ public final class DualScreenPresentation extends Presentation {
         // controller input while the bottom screen is touched.
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
         view = new DualScreenView(getContext());
+        view.setSettingsListener(settingsListener);
         setContentView(view, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));

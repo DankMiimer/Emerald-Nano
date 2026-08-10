@@ -37,10 +37,12 @@ public class PokeEmeraldActivity extends SDLActivity {
         }
     };
 
+    private GbaControlsView controls;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        GbaControlsView controls = new GbaControlsView(this);
+        controls = new GbaControlsView(this);
         mLayout.addView(controls, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
@@ -71,6 +73,11 @@ public class PokeEmeraldActivity extends SDLActivity {
             return; // Single-display device; game stays fullscreen.
         }
         presentation = new DualScreenPresentation(this, displays[0]);
+        presentation.setSettingsListener(() -> {
+            if (controls != null) {
+                controls.postInvalidate();
+            }
+        });
         presentation.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         try {
             presentation.show();

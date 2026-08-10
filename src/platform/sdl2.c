@@ -62,7 +62,7 @@ static char sConfigPath[1024] = "pokeemerald.cfg";
 static u8 sBorderBackground;
 static bool sHasBorderBackgroundConfig;
 static u8 sBackgroundOrderVersion;
-static u8 sPlatformSettings[PLATFORM_SETTING_COUNT] = {0, 4, 0, 1, 1, 10};
+static u8 sPlatformSettings[PLATFORM_SETTING_COUNT] = {0, 4, 0, 1, 1, 10, 0, 0, 1};
 #ifdef __ANDROID__
 static SDL_GameController *androidController;
 #endif
@@ -348,6 +348,19 @@ int main(int argc, char **argv)
                         SDL_RenderCopy(sdlRenderer, sdlBorderTexture, &borderSource, &borderViewport);
                     }
 #else
+                    {
+                        // Widescreen stretches to the full surface; otherwise
+                        // the 240x160 logical size letterboxes to 3:2.
+                        static u8 sAppliedWidescreen = 0xFF;
+                        u8 widescreen = sPlatformSettings[PLATFORM_SETTING_WIDESCREEN];
+                        if (widescreen != sAppliedWidescreen)
+                        {
+                            SDL_RenderSetLogicalSize(sdlRenderer,
+                                    widescreen ? 0 : DISPLAY_WIDTH,
+                                    widescreen ? 0 : DISPLAY_HEIGHT);
+                            sAppliedWidescreen = widescreen;
+                        }
+                    }
                     SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, NULL);
 #endif
 #ifdef __ANDROID__
@@ -459,6 +472,12 @@ static void ReadConfigFile(void)
             sPlatformSettings[PLATFORM_SETTING_BORDER] = value != 0;
         else if (sscanf(line, "volume=%u", &value) == 1 && value <= 10)
             sPlatformSettings[PLATFORM_SETTING_VOLUME] = value;
+        else if (sscanf(line, "backgroundMode=%u", &value) == 1 && value <= 2)
+            sPlatformSettings[PLATFORM_SETTING_BACKGROUND_MODE] = value;
+        else if (sscanf(line, "widescreen=%u", &value) == 1)
+            sPlatformSettings[PLATFORM_SETTING_WIDESCREEN] = value != 0;
+        else if (sscanf(line, "touchControls=%u", &value) == 1)
+            sPlatformSettings[PLATFORM_SETTING_TOUCH_CONTROLS] = value != 0;
     }
     fclose(configFile);
 }
@@ -477,6 +496,9 @@ static void StoreConfigFile(void)
     fprintf(configFile, "vsync=%u\n", sPlatformSettings[PLATFORM_SETTING_VSYNC]);
     fprintf(configFile, "border=%u\n", sPlatformSettings[PLATFORM_SETTING_BORDER]);
     fprintf(configFile, "volume=%u\n", sPlatformSettings[PLATFORM_SETTING_VOLUME]);
+    fprintf(configFile, "backgroundMode=%u\n", sPlatformSettings[PLATFORM_SETTING_BACKGROUND_MODE]);
+    fprintf(configFile, "widescreen=%u\n", sPlatformSettings[PLATFORM_SETTING_WIDESCREEN]);
+    fprintf(configFile, "touchControls=%u\n", sPlatformSettings[PLATFORM_SETTING_TOUCH_CONTROLS]);
     fclose(configFile);
 }
 
@@ -613,6 +635,20 @@ JNIEXPORT jint JNICALL Java_com_pokeemerald_experimental_GbaControlsView_getPlat
     if (setting < 0 || setting >= PLATFORM_SETTING_COUNT)
         return 0;
     return Platform_GetSetting(setting);
+}
+
+JNIEXPORT jint JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetPlatformSetting(JNIEnv *env, jclass clazz, jint setting)
+{
+    if (setting < 0 || setting >= PLATFORM_SETTING_COUNT)
+        return 0;
+    return Platform_GetSetting(setting);
+}
+
+JNIEXPORT void JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeSetPlatformSetting(JNIEnv *env, jclass clazz, jint setting, jint value)
+{
+    if (setting < 0 || setting >= PLATFORM_SETTING_COUNT)
+        return;
+    Platform_SetSetting(setting, (u8)value);
 }
 #endif
 

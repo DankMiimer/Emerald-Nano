@@ -42,4 +42,14 @@ public final class DualScreenBridge {
      * UP=64 DOWN=128 R=256 L=512.
      */
     public static native void nativeQueueKeys(int[] frameMasks);
+
+    // Platform setting indices (see include/platform.h).
+    public static final int SETTING_BACKGROUND_MODE = 6;
+    public static final int SETTING_WIDESCREEN = 7;
+    public static final int SETTING_TOUCH_CONTROLS = 8;
+
+    public static native int nativeGetPlatformSetting(int setting);
+
+    /** Persists to the port's config file. */
+    public static native void nativeSetPlatformSetting(int setting, int value);
 }
