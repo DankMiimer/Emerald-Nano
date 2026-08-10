@@ -58,24 +58,37 @@ VoxelVisualShape VoxelWorld_ClassifyTile(int mapX, int mapY)
         if (metatileId == 622) return VOXEL_SHAPE_VOID; // Black out-of-bounds area
 
         // Common Furniture Behaviors
-        if (behavior == MB_PC || behavior == MB_TELEVISION || metatileId == 570) return VOXEL_SHAPE_TV;
-        if (behavior == MB_PICTURE_BOOK_SHELF || behavior == MB_BOOKSHELF || behavior == MB_POKEMON_CENTER_BOOKSHELF || behavior == MB_SHOP_SHELF || metatileId == 533 || metatileId == 534) return VOXEL_SHAPE_SHELF;
+        if (behavior == MB_PC || behavior == MB_TELEVISION || metatileId == 570) return VOXEL_SHAPE_FURNITURE_TV;
+        if (behavior == MB_PICTURE_BOOK_SHELF || behavior == MB_BOOKSHELF || behavior == MB_POKEMON_CENTER_BOOKSHELF || behavior == MB_SHOP_SHELF || metatileId == 533 || metatileId == 534) return VOXEL_SHAPE_FURNITURE_SHELF;
         if (behavior == MB_COUNTER) return VOXEL_SHAPE_COUNTER;
-        if (MetatileBehavior_IsWarpDoor(behavior) || MetatileBehavior_IsDoor(behavior) || metatileId == 514 || metatileId == 515) return VOXEL_SHAPE_DOOR;
         
         // Some specific visual exceptions
-        if (metatileId == 576 || metatileId == 577 || metatileId == 584 || metatileId == 585 || metatileId == 586) return VOXEL_SHAPE_TABLE;
-        if (metatileId == 565 || metatileId == 558 || metatileId == 566) return VOXEL_SHAPE_CHAIR;
+        if (metatileId == 576 || metatileId == 577 || metatileId == 584 || metatileId == 585 || metatileId == 586) return VOXEL_SHAPE_FURNITURE_TABLE;
+        if (metatileId == 565 || metatileId == 558 || metatileId == 566) return VOXEL_SHAPE_FURNITURE_CHAIR;
         if (metatileId == 578) return VOXEL_SHAPE_VERTICAL_SPRITE;
-        if (metatileId == 589) return VOXEL_SHAPE_STAIRS;
+        if (metatileId == 589) return VOXEL_SHAPE_WALL; // Stairwells are drawn as vertical walls
+        if (MetatileBehavior_IsWarpDoor(behavior) || MetatileBehavior_IsDoor(behavior) || metatileId == 514 || metatileId == 515) return VOXEL_SHAPE_DOOR;
         
         // Dynamic Wall Classification
         if (collision != 0) {
             u8 aboveCollision = MapGridGetCollisionAt(backupX, backupY - 1);
+            u8 belowCollision = MapGridGetCollisionAt(backupX, backupY + 1);
+            
             if (aboveCollision != 0) {
-                return VOXEL_SHAPE_WALL; // Tall wall or continuous impassable structure
+                return VOXEL_SHAPE_WALL; // Tall wall or continuous impassable structure (tree trunk, wall face)
+            } else if (belowCollision != 0) {
+                return VOXEL_SHAPE_WALL_TOP; // Top of the wall or top of a tree
             } else {
-                return VOXEL_SHAPE_LOW_BLOCK; // Short obstacle (table, pot, etc)
+                return VOXEL_SHAPE_LOW_BLOCK; // Short obstacle (rock, fence, etc)
+            }
+        } else {
+            // Check for wall alcoves (like stairs leading down or open doorways)
+            // They are walkable but surrounded by walls on N, E, W
+            u8 nColl = MapGridGetCollisionAt(backupX, backupY - 1);
+            u8 eColl = MapGridGetCollisionAt(backupX + 1, backupY);
+            u8 wColl = MapGridGetCollisionAt(backupX - 1, backupY);
+            if (nColl != 0 && eColl != 0 && wColl != 0) {
+                return VOXEL_SHAPE_WALL; // Draw it as part of the vertical wall
             }
         }
         
