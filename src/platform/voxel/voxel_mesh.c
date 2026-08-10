@@ -77,11 +77,8 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
                     }
                 }
 
-                // Disable texture for solid debug view
-                // glEnable(GL_TEXTURE_2D);
-                // glColor3f(1.0f, 1.0f, 1.0f);
-                glDisable(GL_TEXTURE_2D);
-                glColor3f(0.5f, 0.5f, 0.5f); // Solid gray
+                glEnable(GL_TEXTURE_2D);
+                glColor3f(1.0f, 1.0f, 1.0f);
 
                 if (faceSouth) {
                     float zBack = wz + 1.0f - thick;
@@ -89,24 +86,16 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
 
                     glBegin(GL_QUADS);
                     // Lower Front Face
-                    // glTexCoord2f(u0, v1); glVertex3f(wx,      0.0f, zFront);
-                    // glTexCoord2f(u1, v1); glVertex3f(wx+1.0f, 0.0f, zFront);
-                    // glTexCoord2f(u1, v0); glVertex3f(wx+1.0f, midH, zFront);
-                    // glTexCoord2f(u0, v0); glVertex3f(wx,      midH, zFront);
-                    glVertex3f(wx,      0.0f, zFront);
-                    glVertex3f(wx+1.0f, 0.0f, zFront);
-                    glVertex3f(wx+1.0f, midH, zFront);
-                    glVertex3f(wx,      midH, zFront);
+                    glTexCoord2f(u0, v1); glVertex3f(wx,      0.0f, zFront);
+                    glTexCoord2f(u1, v1); glVertex3f(wx+1.0f, 0.0f, zFront);
+                    glTexCoord2f(u1, v0); glVertex3f(wx+1.0f, midH, zFront);
+                    glTexCoord2f(u0, v0); glVertex3f(wx,      midH, zFront);
                     
                     // Upper Front Face
-                    // glTexCoord2f(t_u0, t_v1); glVertex3f(wx,      midH, zFront);
-                    // glTexCoord2f(t_u1, t_v1); glVertex3f(wx+1.0f, midH, zFront);
-                    // glTexCoord2f(t_u1, t_v0); glVertex3f(wx+1.0f, h,    zFront);
-                    // glTexCoord2f(t_u0, t_v0); glVertex3f(wx,      h,    zFront);
-                    glVertex3f(wx,      midH, zFront);
-                    glVertex3f(wx+1.0f, midH, zFront);
-                    glVertex3f(wx+1.0f, h,    zFront);
-                    glVertex3f(wx,      h,    zFront);
+                    glTexCoord2f(t_u0, t_v1); glVertex3f(wx,      midH, zFront);
+                    glTexCoord2f(t_u1, t_v1); glVertex3f(wx+1.0f, midH, zFront);
+                    glTexCoord2f(t_u1, t_v0); glVertex3f(wx+1.0f, h,    zFront);
+                    glTexCoord2f(t_u0, t_v0); glVertex3f(wx,      h,    zFront);
                     glEnd();
                     
                     glDisable(GL_TEXTURE_2D);
@@ -117,8 +106,9 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
                     glVertex3f(wx+1.0f, h, zFront);
                     glVertex3f(wx,      h, zFront);
                     glEnd();
-                    // glEnable(GL_TEXTURE_2D);
-                    // glColor3f(1.0f, 1.0f, 1.0f);
+                    
+                    glEnable(GL_TEXTURE_2D);
+                    glColor3f(1.0f, 1.0f, 1.0f);
                 }
                 
                 if (faceEast) {
@@ -126,17 +116,17 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
                     float xFront = wx + 1.0f;
 
                     glBegin(GL_QUADS);
-                    // Lower Front Face
-                    glVertex3f(xFront, 0.0f, wz+1.0f);
-                    glVertex3f(xFront, 0.0f, wz);
-                    glVertex3f(xFront, midH, wz);
-                    glVertex3f(xFront, midH, wz+1.0f);
+                    // Lower Front Face (mapped with side texture)
+                    glTexCoord2f(u0, v1); glVertex3f(xFront, 0.0f, wz+1.0f);
+                    glTexCoord2f(u1, v1); glVertex3f(xFront, 0.0f, wz);
+                    glTexCoord2f(u1, v0); glVertex3f(xFront, midH, wz);
+                    glTexCoord2f(u0, v0); glVertex3f(xFront, midH, wz+1.0f);
                     
                     // Upper Front Face
-                    glVertex3f(xFront, midH, wz+1.0f);
-                    glVertex3f(xFront, midH, wz);
-                    glVertex3f(xFront, h,    wz);
-                    glVertex3f(xFront, h,    wz+1.0f);
+                    glTexCoord2f(t_u0, t_v1); glVertex3f(xFront, midH, wz+1.0f);
+                    glTexCoord2f(t_u1, t_v1); glVertex3f(xFront, midH, wz);
+                    glTexCoord2f(t_u1, t_v0); glVertex3f(xFront, h,    wz);
+                    glTexCoord2f(t_u0, t_v0); glVertex3f(xFront, h,    wz+1.0f);
                     glEnd();
                     
                     glDisable(GL_TEXTURE_2D);
@@ -147,6 +137,9 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
                     glVertex3f(xFront, h, wz+1.0f);
                     glVertex3f(xBack,  h, wz+1.0f);
                     glEnd();
+                    
+                    glEnable(GL_TEXTURE_2D);
+                    glColor3f(1.0f, 1.0f, 1.0f);
                 }
                 
                 if (faceWest) {
@@ -154,17 +147,17 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
                     float xFront = wx;
 
                     glBegin(GL_QUADS);
-                    // Lower Front Face
-                    glVertex3f(xFront, 0.0f, wz);
-                    glVertex3f(xFront, 0.0f, wz+1.0f);
-                    glVertex3f(xFront, midH, wz+1.0f);
-                    glVertex3f(xFront, midH, wz);
+                    // Lower Front Face (mapped with side texture)
+                    glTexCoord2f(u0, v1); glVertex3f(xFront, 0.0f, wz);
+                    glTexCoord2f(u1, v1); glVertex3f(xFront, 0.0f, wz+1.0f);
+                    glTexCoord2f(u1, v0); glVertex3f(xFront, midH, wz+1.0f);
+                    glTexCoord2f(u0, v0); glVertex3f(xFront, midH, wz);
                     
                     // Upper Front Face
-                    glVertex3f(xFront, midH, wz);
-                    glVertex3f(xFront, midH, wz+1.0f);
-                    glVertex3f(xFront, h,    wz+1.0f);
-                    glVertex3f(xFront, h,    wz);
+                    glTexCoord2f(t_u0, t_v1); glVertex3f(xFront, midH, wz);
+                    glTexCoord2f(t_u1, t_v1); glVertex3f(xFront, midH, wz+1.0f);
+                    glTexCoord2f(t_u1, t_v0); glVertex3f(xFront, h,    wz+1.0f);
+                    glTexCoord2f(t_u0, t_v0); glVertex3f(xFront, h,    wz);
                     glEnd();
                     
                     glDisable(GL_TEXTURE_2D);
@@ -175,6 +168,9 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
                     glVertex3f(xBack,  h, wz+1.0f);
                     glVertex3f(xFront, h, wz+1.0f);
                     glEnd();
+                    
+                    glEnable(GL_TEXTURE_2D);
+                    glColor3f(1.0f, 1.0f, 1.0f);
                 }
                 
                 glDisable(GL_TEXTURE_2D);
@@ -186,7 +182,6 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
 void VoxelMesh_DrawTile(int mapX, int mapY, VoxelVisualShape shape, int metatileId)
 {
     if (shape == VOXEL_SHAPE_VOID) return;
-    if (shape == VOXEL_SHAPE_WALL_TOP) return; // Wall tops are drawn as part of the WALL below them
 
     float wx = (float)mapX;
     float wz = (float)mapY;
@@ -218,7 +213,8 @@ void VoxelMesh_DrawTile(int mapX, int mapY, VoxelVisualShape shape, int metatile
         case VOXEL_SHAPE_DECORATION: h = 0.3f; break;
         case VOXEL_SHAPE_DOOR: h = 0.05f; break;
         case VOXEL_SHAPE_STAIRS: h = 0.2f; break;
-        case VOXEL_SHAPE_WALL: h = 1.8f; break;
+        case VOXEL_SHAPE_WALL: h = 0.0f; break; // Handled by VoxelMesh_BuildWalls
+        case VOXEL_SHAPE_WALL_TOP: h = 0.0f; break;
         default: h = 1.0f; break;
     }
 
