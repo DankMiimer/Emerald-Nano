@@ -28,7 +28,10 @@
 #include "event_data.h"
 #include "money.h"
 #include "overworld.h"
+#include "pokedex.h"
+#include "pokemon_summary_screen.h"
 #include "region_map.h"
+#include "battle_main.h"
 #include "platform/dualscreen.h"
 #include "constants/battle.h"
 #include "constants/characters.h"
@@ -245,6 +248,41 @@ static void WritePartyMonJson(struct JsonWriter *w, struct Pokemon *mon)
     else
         JsonPut(w, "\"types\":[0,0],");
 
+    // Detail-view extras: computed stats, experience progress, nature, ability.
+    if (!isEgg && species < NUM_SPECIES)
+    {
+        u32 exp = GetMonData(mon, MON_DATA_EXP);
+        u8 level = GetMonData(mon, MON_DATA_LEVEL);
+        u8 growth = gSpeciesInfo[species].growthRate;
+        int expPct = 100;
+        u8 abilityId;
+        char text2[24];
+
+        if (level < MAX_LEVEL)
+        {
+            u32 base = gExperienceTables[growth][level];
+            u32 next = gExperienceTables[growth][level + 1];
+            if (next > base)
+                expPct = (int)(((u64)(exp - base)) * 100 / (next - base));
+            if (expPct < 0) expPct = 0;
+            if (expPct > 100) expPct = 100;
+        }
+        JsonPut(w, "\"expPct\":%d,", expPct);
+        JsonPut(w, "\"stats\":[%u,%u,%u,%u,%u],",
+                GetMonData(mon, MON_DATA_ATK), GetMonData(mon, MON_DATA_DEF),
+                GetMonData(mon, MON_DATA_SPEED),
+                GetMonData(mon, MON_DATA_SPATK), GetMonData(mon, MON_DATA_SPDEF));
+
+        DecodeGbaString(text2, sizeof(text2), gNatureNamePointers[GetNature(mon)], 12);
+        JsonPut(w, "\"nature\":");
+        JsonPutString(w, text2);
+        abilityId = GetMonAbility(mon);
+        DecodeGbaString(text2, sizeof(text2), gAbilityNames[abilityId], 16);
+        JsonPut(w, ",\"ability\":");
+        JsonPutString(w, text2);
+        JsonPut(w, ",");
+    }
+
     JsonPut(w, "\"moves\":[");
     for (i = 0; i < MAX_MON_MOVES; i++)
     {
@@ -422,6 +460,17 @@ static void BuildSnapshot(char *buffer, int capacity)
             JsonPut(w, "\"name\":");
             JsonPutString(w, name);
             JsonPut(w, ",");
+        }
+        {
+            int badgeFlags = 0;
+            for (i = 0; i < NUM_BADGES; i++)
+            {
+                if (FlagGet(FLAG_BADGE01_GET + i))
+                    badgeFlags |= 1 << i;
+            }
+            JsonPut(w, "\"badgeFlags\":%d,\"dexSeen\":%u,\"dexCaught\":%u,",
+                    badgeFlags, GetHoennPokedexCount(FLAG_GET_SEEN),
+                    GetHoennPokedexCount(FLAG_GET_CAUGHT));
         }
         JsonPut(w, "\"gender\":%d,\"money\":%u,\"badges\":%d,",
                 gSaveBlock2Ptr->playerGender, (unsigned)GetMoney(&gSaveBlock1Ptr->money), badges);
@@ -698,7 +747,7 @@ JNIEXPORT jstring JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nat
     return (*env)->NewStringUTF(env, json);
 }
 
-JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetMonIcon(JNIEnv *env, jclass clazz, jint species)
+JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetMonIcon(JNIEnv *env, jclass clazz, jint species, jint frame)
 {
     const u8 *tiles;
     const u16 *palette;
@@ -712,6 +761,8 @@ JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_n
     palette = GetValidMonIconPalettePtr(species);
     if (tiles == NULL || palette == NULL)
         return NULL;
+    if (frame == 1)
+        tiles += 0x400; // second animation frame, stacked below the first
 
     // First frame only: 32x32 4bpp, 4x4 tiles of 8x8, 32 bytes per tile.
     for (tileY = 0; tileY < 4; tileY++)

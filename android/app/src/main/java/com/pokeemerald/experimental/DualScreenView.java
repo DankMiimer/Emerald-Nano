@@ -72,6 +72,9 @@ public final class DualScreenView extends View {
     private DualScreenState state = new DualScreenState();
     private int tab = TAB_PARTY;
     private int bagPocket;
+    private int detailMon = -1; // party index shown in the detail view, -1 = grid
+    private final RectF[] partyCards = {new RectF(), new RectF(), new RectF(),
+                                        new RectF(), new RectF(), new RectF()};
     private java.util.List<MapEntry> mapEntries;
     private Bitmap regionMap;
     private final RectF[] battleButtons = {new RectF(), new RectF(), new RectF(), new RectF()};
@@ -100,16 +103,19 @@ public final class DualScreenView extends View {
     }
 
     private Bitmap monIcon(int species) {
-        Bitmap cached = iconCache.get(species);
+        // Alternate the icon's two animation frames, like the party menu.
+        int frame = (int) ((System.currentTimeMillis() / 300) % 2);
+        int key = species * 2 + frame;
+        Bitmap cached = iconCache.get(key);
         if (cached != null) {
             return cached;
         }
-        int[] pixels = DualScreenBridge.nativeGetMonIcon(species);
+        int[] pixels = DualScreenBridge.nativeGetMonIcon(species, frame);
         if (pixels == null || pixels.length != 32 * 32) {
             return null;
         }
         Bitmap bitmap = Bitmap.createBitmap(pixels, 32, 32, Bitmap.Config.ARGB_8888);
-        iconCache.put(species, bitmap);
+        iconCache.put(key, bitmap);
         return bitmap;
     }
 
@@ -141,8 +147,24 @@ public final class DualScreenView extends View {
             for (int i = 0; i < TAB_NAMES.length; i++) {
                 if (tabRect(i).contains(event.getX(), event.getY())) {
                     tab = i;
+                    detailMon = -1;
                     invalidate();
                     return true;
+                }
+            }
+            if (tab == TAB_PARTY) {
+                if (detailMon >= 0) {
+                    detailMon = -1; // any tap closes the detail view
+                    invalidate();
+                    return true;
+                }
+                for (int i = 0; i < partyCards.length; i++) {
+                    if (partyCards[i].contains(event.getX(), event.getY())
+                            && i < state.party.size()) {
+                        detailMon = i;
+                        invalidate();
+                        return true;
+                    }
                 }
             }
             if (tab == TAB_BAG) {
@@ -366,6 +388,10 @@ public final class DualScreenView extends View {
     }
 
     private void drawParty(Canvas canvas) {
+        if (detailMon >= 0 && detailMon < state.party.size()) {
+            drawPartyDetail(canvas, state.party.get(detailMon));
+            return;
+        }
         GbaFont f = font();
         float contentHeight = getHeight() - tabBarHeight();
         float pad = getWidth() * 0.012f;
@@ -377,6 +403,7 @@ public final class DualScreenView extends View {
             float left = pad + (i % 2) * (colW + pad);
             float top = pad + (i / 2) * (rowH + pad);
             RectF card = new RectF(left, top, left + colW, top + rowH);
+            partyCards[i].set(card);
             paint.setColor(i < state.party.size() ? PANEL_WHITE : 0x66FFFFFF);
             canvas.drawRoundRect(card, 10, 10, paint);
             paint.setColor(i < state.party.size() ? BAR_BORDER : 0x66A88848);
@@ -423,6 +450,103 @@ public final class DualScreenView extends View {
         }
     }
 
+    private static final String[] STAT_NAMES = {"ATTACK", "DEFENSE", "SPEED", "SP. ATK", "SP. DEF"};
+
+    private void drawPartyDetail(Canvas canvas, DualScreenState.Mon mon) {
+        GbaFont f = font();
+        if (f == null) {
+            return;
+        }
+        float contentHeight = getHeight() - tabBarHeight();
+        float pad = getWidth() * 0.025f;
+        float scale = getWidth() / 440f;
+
+        // Header: big icon + identity.
+        RectF header = new RectF(pad, pad, getWidth() - pad, contentHeight * 0.30f);
+        paint.setColor(PANEL_WHITE);
+        canvas.drawRoundRect(header, 12, 12, paint);
+        paint.setColor(BAR_BORDER);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(3);
+        canvas.drawRoundRect(header, 12, 12, paint);
+        paint.setStyle(Paint.Style.FILL);
+
+        float inset = header.height() * 0.14f;
+        float iconSize = header.height() * 0.72f;
+        Bitmap icon = mon.isEgg ? null : monIcon(mon.species);
+        if (icon != null) {
+            canvas.drawBitmap(icon, null,
+                    new RectF(header.left + inset, header.centerY() - iconSize / 2,
+                              header.left + inset + iconSize, header.centerY() + iconSize / 2), pixelPaint);
+        }
+        float textLeft = header.left + inset + iconSize + inset;
+        f.draw(canvas, mon.nick + "  Lv" + mon.level
+                + (mon.gender == 0 ? " ♂" : mon.gender == 1 ? " ♀" : ""),
+                textLeft, header.top + inset, scale * 1.2f, TEXT_DARK, TEXT_SHADOW);
+        f.draw(canvas, mon.name + "  " + mon.nature + "  " + mon.ability,
+                textLeft, header.top + inset + GbaFont.LINE_HEIGHT * scale * 1.35f,
+                scale * 0.9f, TEXT_DARK, TEXT_SHADOW);
+        float barTop = header.bottom - inset - header.height() * 0.16f;
+        drawHpBar(canvas, textLeft, barTop, header.right - inset - textLeft - 140,
+                header.height() * 0.09f, mon.hp, mon.maxHp);
+        f.draw(canvas, mon.hp + "/" + mon.maxHp, header.right - inset - 130,
+                barTop - 4, scale * 0.85f, TEXT_DARK, TEXT_SHADOW);
+        // Exp bar under the HP bar, Emerald blue.
+        paint.setColor(0xFF3890F0);
+        float expW = (header.right - inset - textLeft - 140) * mon.expPct / 100f;
+        canvas.drawRoundRect(new RectF(textLeft, barTop + header.height() * 0.12f,
+                textLeft + Math.max(expW, 4), barTop + header.height() * 0.12f + 8), 4, 4, paint);
+        float badgeH2 = header.height() * 0.14f;
+        drawTypeBadge(canvas, mon.types[0], header.right - inset - badgeH2 * 3.1f, header.top + inset, badgeH2);
+        if (mon.types[1] != mon.types[0]) {
+            drawTypeBadge(canvas, mon.types[1], header.right - inset - badgeH2 * 3.1f * 2 - 8,
+                    header.top + inset, badgeH2);
+        }
+
+        // Left column: stats. Right column: moves with PP.
+        float columnsTop = header.bottom + pad;
+        float colW = (getWidth() - pad * 3) / 2;
+        RectF statsBox = new RectF(pad, columnsTop, pad + colW, contentHeight - pad);
+        RectF movesBox = new RectF(pad * 2 + colW, columnsTop, getWidth() - pad, contentHeight - pad);
+        for (RectF box : new RectF[] {statsBox, movesBox}) {
+            paint.setColor(PANEL_WHITE);
+            canvas.drawRoundRect(box, 12, 12, paint);
+            paint.setColor(BAR_BORDER);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(3);
+            canvas.drawRoundRect(box, 12, 12, paint);
+            paint.setStyle(Paint.Style.FILL);
+        }
+
+        float rowStep = (statsBox.height() - pad * 2) / 5f;
+        for (int i = 0; i < 5; i++) {
+            float y = statsBox.top + pad + i * rowStep + (rowStep - GbaFont.LINE_HEIGHT * scale) / 2;
+            f.draw(canvas, STAT_NAMES[i], statsBox.left + pad, y, scale, TEXT_DARK, TEXT_SHADOW);
+            String v = Integer.toString(mon.stats[i]);
+            float w = f.measure(v, scale);
+            f.draw(canvas, v, statsBox.right - pad - w, y, scale, TEXT_DARK, TEXT_SHADOW);
+        }
+
+        float moveStep = (movesBox.height() - pad * 2) / 4f;
+        for (int i = 0; i < 4; i++) {
+            float y = movesBox.top + pad + i * moveStep + (moveStep - GbaFont.LINE_HEIGHT * scale) / 2;
+            if (i < mon.moves.size()) {
+                DualScreenState.Move move = mon.moves.get(i);
+                float badgeH = moveStep * 0.42f;
+                drawTypeBadge(canvas, move.type, movesBox.left + pad,
+                        y + (GbaFont.LINE_HEIGHT * scale - badgeH) / 2, badgeH);
+                f.draw(canvas, move.name, movesBox.left + pad + badgeH * 3.1f + 12, y,
+                        scale, TEXT_DARK, TEXT_SHADOW);
+                String pp = move.pp + "/" + move.maxPp;
+                float w = f.measure(pp, scale * 0.85f);
+                f.draw(canvas, pp, movesBox.right - pad - w, y, scale * 0.85f,
+                        move.pp == 0 ? HP_RED : TEXT_DARK, TEXT_SHADOW);
+            } else {
+                f.draw(canvas, "-", movesBox.left + pad, y, scale, TEXT_DARK, TEXT_SHADOW);
+            }
+        }
+    }
+
     private void drawBattleMonCard(Canvas canvas, DualScreenState.Mon mon, RectF rect,
                                    String namePrefix, float scale) {
         GbaFont f = font();
@@ -463,6 +587,16 @@ public final class DualScreenView extends View {
                 rect.height() * 0.1f, mon.hp, mon.maxHp);
         f.draw(canvas, mon.hp + "/" + mon.maxHp, textLeft,
                 barTop + rect.height() * 0.1f + 8, scale * 0.85f, TEXT_DARK, TEXT_SHADOW);
+        if (namePrefix.isEmpty()) {
+            // Player's mon: slim exp bar, Emerald blue.
+            float expTop = barTop + rect.height() * 0.1f + GbaFont.LINE_HEIGHT * scale * 0.85f + 14;
+            float expFullW = rect.right - inset - textLeft;
+            paint.setColor(0xFFE8E8E0);
+            canvas.drawRoundRect(new RectF(textLeft, expTop, textLeft + expFullW, expTop + 8), 4, 4, paint);
+            paint.setColor(0xFF3890F0);
+            canvas.drawRoundRect(new RectF(textLeft, expTop,
+                    textLeft + Math.max(expFullW * mon.expPct / 100f, 4), expTop + 8), 4, 4, paint);
+        }
         String status = statusLabel(mon.status, mon.hp);
         if (status != null) {
             float w = f.measure(status, scale * 0.85f);
@@ -808,12 +942,30 @@ public final class DualScreenView extends View {
         String[][] rowsData = {
             {"MONEY", "$" + state.money},
             {"TIME", state.hours + ":" + String.format("%02d", state.minutes)},
-            {"BADGES", Integer.toString(state.badges)},
+            {"POKéDEX", state.dexCaught + " / " + state.dexSeen + " seen"},
             {"PLACE", state.mapName},
         };
         for (int i = 0; i < rowsData.length; i++) {
             f.draw(canvas, rowsData[i][0], lineX, lineY + i * lineStep, scale, TEXT_DARK, TEXT_SHADOW);
             f.draw(canvas, rowsData[i][1], valueX, lineY + i * lineStep, scale, TEXT_DARK, TEXT_SHADOW);
+        }
+
+        // Badge dots along the bottom of the inner card, one per gym.
+        float dotR = inner.height() * 0.045f;
+        float dotsY = inner.bottom - dotR * 2.2f;
+        float dotStep = inner.width() * 0.09f;
+        float dotsX = inner.left + inner.width() * 0.06f + dotR;
+        for (int i = 0; i < 8; i++) {
+            boolean earned = (state.badgeFlags & (1 << i)) != 0;
+            paint.setColor(earned ? 0xFFE8B830 : 0xFFD8D8D0);
+            canvas.drawCircle(dotsX + i * dotStep, dotsY, dotR, paint);
+            if (earned) {
+                paint.setColor(0xFFB08820);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(3);
+                canvas.drawCircle(dotsX + i * dotStep, dotsY, dotR, paint);
+                paint.setStyle(Paint.Style.FILL);
+            }
         }
     }
 }

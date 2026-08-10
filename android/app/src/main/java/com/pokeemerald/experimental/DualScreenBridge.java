@@ -11,11 +11,11 @@ public final class DualScreenBridge {
     public static native String nativeGetSnapshotJson();
 
     /**
-     * Renders the 32x32 party icon for a species into ARGB_8888 pixels
-     * (row-major, length 32*32), decoded from the game's own icon data.
-     * Returns null for invalid species.
+     * Renders a 32x32 party icon frame (0 or 1) for a species into
+     * ARGB_8888 pixels (row-major, length 32*32), decoded from the game's
+     * own icon data. Returns null for invalid species.
      */
-    public static native int[] nativeGetMonIcon(int species);
+    public static native int[] nativeGetMonIcon(int species, int frame);
 
     /**
      * The game's region map location table as a JSON array of

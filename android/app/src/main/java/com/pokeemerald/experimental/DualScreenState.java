@@ -37,6 +37,10 @@ public final class DualScreenState {
         public boolean isEgg;
         public int gender; // 0 male, 1 female, 2 genderless
         public int[] types = {0, 0};
+        public int expPct;
+        public int[] stats = new int[5]; // atk, def, speed, spatk, spdef
+        public String nature = "";
+        public String ability = "";
         public final List<Move> moves = new ArrayList<>();
     }
 
@@ -50,6 +54,9 @@ public final class DualScreenState {
     public int playerGender;
     public int money;
     public int badges;
+    public int badgeFlags;
+    public int dexSeen;
+    public int dexCaught;
     public int hours;
     public int minutes;
     public String mapName = "";
@@ -79,6 +86,15 @@ public final class DualScreenState {
         if (types != null && types.length() >= 2) {
             m.types[0] = types.getInt(0);
             m.types[1] = types.getInt(1);
+        }
+        m.expPct = o.optInt("expPct");
+        m.nature = o.optString("nature");
+        m.ability = o.optString("ability");
+        JSONArray stats = o.optJSONArray("stats");
+        if (stats != null && stats.length() >= 5) {
+            for (int i = 0; i < 5; i++) {
+                m.stats[i] = stats.getInt(i);
+            }
         }
         JSONArray moves = o.optJSONArray("moves");
         if (moves != null) {
@@ -111,6 +127,9 @@ public final class DualScreenState {
                 state.playerGender = player.optInt("gender");
                 state.money = player.optInt("money");
                 state.badges = player.optInt("badges");
+                state.badgeFlags = player.optInt("badgeFlags");
+                state.dexSeen = player.optInt("dexSeen");
+                state.dexCaught = player.optInt("dexCaught");
                 state.hours = player.optInt("hours");
                 state.minutes = player.optInt("minutes");
                 state.mapName = player.optString("mapName");
