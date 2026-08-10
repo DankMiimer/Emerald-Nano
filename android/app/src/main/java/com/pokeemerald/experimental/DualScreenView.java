@@ -320,16 +320,6 @@ public final class DualScreenView extends View {
             f.draw(canvas, title, textLeft, card.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
 
             if (!mon.isEgg) {
-                // Type badges live on the title row, right-aligned, out of the
-                // way of the HP text below.
-                float badgeH = rowH * 0.14f;
-                float badgeRight = card.right - inset;
-                if (mon.types[1] != mon.types[0]) {
-                    drawTypeBadge(canvas, mon.types[1], badgeRight - badgeH * 3.1f, card.top + inset, badgeH);
-                    badgeRight -= badgeH * 3.1f + 8;
-                }
-                drawTypeBadge(canvas, mon.types[0], badgeRight - badgeH * 3.1f, card.top + inset, badgeH);
-
                 String sub = "Lv" + mon.level + (mon.gender == 0 ? " ♂" : mon.gender == 1 ? " ♀" : "");
                 float subScale = scale * 0.85f;
                 f.draw(canvas, sub, textLeft, card.top + inset + GbaFont.LINE_HEIGHT * scale + 4,
