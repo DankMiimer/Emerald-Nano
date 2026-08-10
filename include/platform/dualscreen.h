@@ -21,8 +21,11 @@ u32 DualScreen_BattleUiActive(void);
 u16 DualScreen_ConsumeVirtualKeys(void);
 
 // Implemented in battle_controller_player.c: whether the player-controlled
-// battler is currently on the action menu / move menu.
+// battler is currently on the action menu / move menu, and which battler
+// that is (-1 if the menu is not open; matters in double battles).
 u32 DualScreen_PlayerAtActionSelect(void);
 u32 DualScreen_PlayerAtMoveSelect(void);
+s32 DualScreen_PlayerActionBattler(void);
+s32 DualScreen_PlayerMoveBattler(void);
 
 #endif // GUARD_PLATFORM_DUALSCREEN_H

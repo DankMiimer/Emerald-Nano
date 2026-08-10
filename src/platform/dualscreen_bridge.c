@@ -460,11 +460,23 @@ static void BuildSnapshot(char *buffer, int capacity)
         {
             u8 playerBattler = GetBattlerAtPosition(B_POSITION_PLAYER_LEFT);
             u8 enemyBattler = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
+            int menu = 0;
+
+            // In doubles the two player mons pick sequentially; show whichever
+            // battler the open menu belongs to.
+            if (DualScreen_BattleUiActive())
+            {
+                s32 menuBattler = DualScreen_PlayerMoveBattler();
+                if (menuBattler >= 0)
+                    menu = 2;
+                else if ((menuBattler = DualScreen_PlayerActionBattler()) >= 0)
+                    menu = 1;
+                if (menuBattler >= 0 && menuBattler < MAX_BATTLERS_COUNT)
+                    playerBattler = menuBattler;
+            }
+
             if (playerBattler < MAX_BATTLERS_COUNT && enemyBattler < MAX_BATTLERS_COUNT)
             {
-                int menu = !DualScreen_BattleUiActive() ? 0
-                         : DualScreen_PlayerAtMoveSelect() ? 2
-                         : DualScreen_PlayerAtActionSelect() ? 1 : 0;
                 JsonPut(w, "\"battle\":{\"kind\":%d,",
                         (gBattleTypeFlags & BATTLE_TYPE_TRAINER) ? 1 : 0);
                 JsonPut(w, "\"menu\":%d,\"actionCursor\":%d,\"moveCursor\":%d,",

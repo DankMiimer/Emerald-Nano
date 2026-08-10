@@ -3163,27 +3163,39 @@ static void PlayerCmdEnd(void)
 }
 
 #ifdef PLATFORM_SDL2
-// Dual-screen bridge accessors (see platform/dualscreen.h): report whether a
-// player-controlled battler is waiting on the action or move menu.
-u32 DualScreen_PlayerAtActionSelect(void)
+// Dual-screen bridge accessors (see platform/dualscreen.h): report which
+// player-controlled battler is on the action / move menu (important in
+// doubles, where the two mons pick sequentially). Returns the battler id,
+// or -1 when that menu is not open.
+s32 DualScreen_PlayerActionBattler(void)
 {
     u32 i;
     for (i = 0; i < gBattlersCount; i++)
     {
         if (gBattlerControllerFuncs[i] == HandleInputChooseAction)
-            return TRUE;
+            return i;
     }
-    return FALSE;
+    return -1;
 }
 
-u32 DualScreen_PlayerAtMoveSelect(void)
+s32 DualScreen_PlayerMoveBattler(void)
 {
     u32 i;
     for (i = 0; i < gBattlersCount; i++)
     {
         if (gBattlerControllerFuncs[i] == HandleInputChooseMove)
-            return TRUE;
+            return i;
     }
-    return FALSE;
+    return -1;
+}
+
+u32 DualScreen_PlayerAtActionSelect(void)
+{
+    return DualScreen_PlayerActionBattler() >= 0;
+}
+
+u32 DualScreen_PlayerAtMoveSelect(void)
+{
+    return DualScreen_PlayerMoveBattler() >= 0;
 }
 #endif
