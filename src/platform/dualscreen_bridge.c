@@ -38,7 +38,7 @@
 #include "constants/region_map_sections.h"
 
 #define SNAPSHOT_CAPACITY 24576
-#define SNAPSHOT_FRAME_INTERVAL 16
+#define SNAPSHOT_FRAME_INTERVAL 8
 #define VIRTUAL_KEY_QUEUE_SIZE 64
 
 static char sBuffers[2][SNAPSHOT_CAPACITY];
@@ -53,6 +53,12 @@ static int sVirtualKeyCount;
 
 u32 DualScreen_BattleUiActive(void)
 {
+    // Battles with nonstandard menus (Safari's BALL/BAIT/ROCK, Wally's
+    // scripted tutorial) or strict timing (link) keep the classic top-screen
+    // UI; the bottom screen then just shows the status cards.
+    if (gMain.inBattle
+     && (gBattleTypeFlags & (BATTLE_TYPE_SAFARI | BATTLE_TYPE_WALLY_TUTORIAL | BATTLE_TYPE_LINK)))
+        return FALSE;
     return TRUE;
 }
 
@@ -456,7 +462,8 @@ static void BuildSnapshot(char *buffer, int capacity)
             u8 enemyBattler = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
             if (playerBattler < MAX_BATTLERS_COUNT && enemyBattler < MAX_BATTLERS_COUNT)
             {
-                int menu = DualScreen_PlayerAtMoveSelect() ? 2
+                int menu = !DualScreen_BattleUiActive() ? 0
+                         : DualScreen_PlayerAtMoveSelect() ? 2
                          : DualScreen_PlayerAtActionSelect() ? 1 : 0;
                 JsonPut(w, "\"battle\":{\"kind\":%d,",
                         (gBattleTypeFlags & BATTLE_TYPE_TRAINER) ? 1 : 0);

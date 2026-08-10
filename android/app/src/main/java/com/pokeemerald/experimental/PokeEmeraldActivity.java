@@ -16,7 +16,7 @@ import java.util.Arrays;
 import org.libsdl.app.SDLActivity;
 
 public class PokeEmeraldActivity extends SDLActivity {
-    private static final long SNAPSHOT_INTERVAL_MS = 250;
+    private static final long SNAPSHOT_INTERVAL_MS = 120;
 
     private DualScreenPresentation presentation;
     private final Handler snapshotHandler = new Handler(Looper.getMainLooper());
