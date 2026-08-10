@@ -507,10 +507,12 @@ static jint Bgr555ToArgb(u16 bgr)
 
 // The real Pokenav Hoenn map, composed from the game's own tileset/tilemap:
 // 240x160 ARGB pixels. The player marker goes at tile (rmx+1, rmy+2).
+// The map is an affine BG: one byte per tile on a 64x64 grid, 8bpp tiles,
+// with pixel values indexing the palette loaded at bank 7 (offset 112).
 JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetRegionMapImage(JNIEnv *env, jclass clazz)
 {
     static u8 sGfx[16384];
-    static u16 sTilemap[2048];
+    static u8 sTilemap[4096];
     jintArray result;
     jint *pixels;
     const u16 *pal = DualScreen_GetRegionMapPal();
@@ -526,19 +528,14 @@ JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_n
     for (ty = 0; ty < 20; ty++)
     for (tx = 0; tx < 30; tx++)
     {
-        u16 entry = sTilemap[ty * 32 + tx];
-        u16 tile = entry & 0x3FF;
-        int hflip = (entry >> 10) & 1;
-        int vflip = (entry >> 11) & 1;
+        u8 tile = sTilemap[ty * 64 + tx];
         const u8 *src = &sGfx[tile * 64];
         if (tile * 64 >= (int)sizeof(sGfx))
             continue;
         for (py = 0; py < 8; py++)
         for (px = 0; px < 8; px++)
         {
-            int sx = hflip ? 7 - px : px;
-            int sy = vflip ? 7 - py : py;
-            u8 colorIndex = src[sy * 8 + sx];
+            u8 colorIndex = (u8)(src[py * 8 + px] - 112);
             pixels[(ty * 8 + py) * 240 + tx * 8 + px] = Bgr555ToArgb(pal[colorIndex & 0x1F]);
         }
     }
@@ -579,7 +576,7 @@ JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_n
             const u16 *tileRows = rows + tile * 8;
             for (py = 0; py < 8; py++)
             for (px = 0; px < 8; px++)
-                out[(baseY + py) * 16 + baseX + px] = (tileRows[py] >> (px * 2)) & 0x3;
+                out[(baseY + py) * 16 + baseX + px] = (tileRows[py] >> ((7 - px) * 2)) & 0x3;
         }
     }
 
