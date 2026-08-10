@@ -67,6 +67,7 @@ public final class GbaFont {
         case '$': return 0xB7; // Pokédollar
         case '♂': return 0xB5; // male
         case '♀': return 0xB6; // female
+        case 'é': return 0x1B;
         }
         return -1;
     }

@@ -35,4 +35,11 @@ public final class DualScreenBridge {
      * (0 transparent, 1 foreground, 2 shadow). Static data; fetch once.
      */
     public static native int[] nativeGetFontAtlas();
+
+    /**
+     * Enqueue synthetic GBA button states, one array entry per frame
+     * (0 releases all). Masks: A=1 B=2 SELECT=4 START=8 RIGHT=16 LEFT=32
+     * UP=64 DOWN=128 R=256 L=512.
+     */
+    public static native void nativeQueueKeys(int[] frameMasks);
 }

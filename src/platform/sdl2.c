@@ -1064,12 +1064,12 @@ u16 Platform_GetKeyInput(void)
 {
 #ifdef _WIN32
     u16 gamepadKeys = GetXInputKeys();
-    return gamepadKeys | keyboardKeys;
+    return gamepadKeys | keyboardKeys | DualScreen_ConsumeVirtualKeys();
 #elif defined(__ANDROID__)
-    return keyboardKeys | controllerKeys | controllerAxisKeys;
+    return keyboardKeys | controllerKeys | controllerAxisKeys | DualScreen_ConsumeVirtualKeys();
 #endif
 
-    return keyboardKeys;
+    return keyboardKeys | DualScreen_ConsumeVirtualKeys();
 }
 
 void VDraw(SDL_Texture *texture)

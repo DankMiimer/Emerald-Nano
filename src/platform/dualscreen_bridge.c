@@ -39,11 +39,47 @@
 
 #define SNAPSHOT_CAPACITY 24576
 #define SNAPSHOT_FRAME_INTERVAL 16
+#define VIRTUAL_KEY_QUEUE_SIZE 64
 
 static char sBuffers[2][SNAPSHOT_CAPACITY];
 static int sFrontBuffer;
 static SDL_mutex *sSnapshotMutex;
 static u32 sFrameCounter;
+
+static u16 sVirtualKeys[VIRTUAL_KEY_QUEUE_SIZE];
+static SDL_SpinLock sVirtualKeyLock;
+static int sVirtualKeyHead;
+static int sVirtualKeyCount;
+
+u32 DualScreen_BattleUiActive(void)
+{
+    return TRUE;
+}
+
+u16 DualScreen_ConsumeVirtualKeys(void)
+{
+    u16 keys = 0;
+    SDL_AtomicLock(&sVirtualKeyLock);
+    if (sVirtualKeyCount > 0)
+    {
+        keys = sVirtualKeys[sVirtualKeyHead];
+        sVirtualKeyHead = (sVirtualKeyHead + 1) % VIRTUAL_KEY_QUEUE_SIZE;
+        sVirtualKeyCount--;
+    }
+    SDL_AtomicUnlock(&sVirtualKeyLock);
+    return keys;
+}
+
+static void QueueVirtualKeys(u16 keys)
+{
+    SDL_AtomicLock(&sVirtualKeyLock);
+    if (sVirtualKeyCount < VIRTUAL_KEY_QUEUE_SIZE)
+    {
+        sVirtualKeys[(sVirtualKeyHead + sVirtualKeyCount) % VIRTUAL_KEY_QUEUE_SIZE] = keys;
+        sVirtualKeyCount++;
+    }
+    SDL_AtomicUnlock(&sVirtualKeyLock);
+}
 
 // ---------------------------------------------------------------------------
 // GBA charset -> ASCII
@@ -420,8 +456,13 @@ static void BuildSnapshot(char *buffer, int capacity)
             u8 enemyBattler = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
             if (playerBattler < MAX_BATTLERS_COUNT && enemyBattler < MAX_BATTLERS_COUNT)
             {
+                int menu = DualScreen_PlayerAtMoveSelect() ? 2
+                         : DualScreen_PlayerAtActionSelect() ? 1 : 0;
                 JsonPut(w, "\"battle\":{\"kind\":%d,",
                         (gBattleTypeFlags & BATTLE_TYPE_TRAINER) ? 1 : 0);
+                JsonPut(w, "\"menu\":%d,\"actionCursor\":%d,\"moveCursor\":%d,",
+                        menu, gActionSelectionCursor[playerBattler],
+                        gMoveSelectionCursor[playerBattler]);
                 JsonPut(w, "\"playerMon\":");
                 WriteBattleMonJson(w, &gBattleMons[playerBattler]);
                 JsonPut(w, ",\"enemyMon\":");
@@ -453,6 +494,12 @@ void DualScreen_FrameHook(void)
         strcpy(sBuffers[1], sBuffers[0]);
     }
 
+    // While the bottom screen owns the move menu, keep the top screen's
+    // textbox on the message/prompt band instead of the move grid
+    // (BG0 scroll selects which band of the battle textbox is shown).
+    if (DualScreen_BattleUiActive() && gMain.inBattle && DualScreen_PlayerAtMoveSelect())
+        gBattle_BG0_Y = DISPLAY_HEIGHT;
+
     if (++sFrameCounter % SNAPSHOT_FRAME_INTERVAL != 0)
         return;
 
@@ -479,6 +526,23 @@ const char *DualScreen_GetSnapshotJson(void)
 // ---------------------------------------------------------------------------
 
 #ifdef __ANDROID__
+
+// Enqueue synthetic button states, one entry per frame (0 = release).
+JNIEXPORT void JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeQueueKeys(JNIEnv *env, jclass clazz, jintArray masks)
+{
+    jint buffer[VIRTUAL_KEY_QUEUE_SIZE];
+    jsize length;
+    jsize i;
+
+    if (masks == NULL)
+        return;
+    length = (*env)->GetArrayLength(env, masks);
+    if (length > VIRTUAL_KEY_QUEUE_SIZE)
+        length = VIRTUAL_KEY_QUEUE_SIZE;
+    (*env)->GetIntArrayRegion(env, masks, 0, length, buffer);
+    for (i = 0; i < length; i++)
+        QueueVirtualKeys((u16)buffer[i]);
+}
 
 JNIEXPORT jstring JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetSnapshotJson(JNIEnv *env, jclass clazz)
 {

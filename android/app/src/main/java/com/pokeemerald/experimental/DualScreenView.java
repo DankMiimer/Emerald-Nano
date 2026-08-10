@@ -58,6 +58,14 @@ public final class DualScreenView extends View {
         String name = "";
     }
 
+    // GBA button masks for the virtual key queue.
+    private static final int KEY_A = 1;
+    private static final int KEY_B = 2;
+    private static final int KEY_RIGHT = 16;
+    private static final int KEY_LEFT = 32;
+    private static final int KEY_UP = 64;
+    private static final int KEY_DOWN = 128;
+
     private final Paint paint = new Paint();
     private final Paint pixelPaint = new Paint();
     private final SparseArray<Bitmap> iconCache = new SparseArray<>();
@@ -66,6 +74,10 @@ public final class DualScreenView extends View {
     private int bagPocket;
     private java.util.List<MapEntry> mapEntries;
     private Bitmap regionMap;
+    private final RectF[] battleButtons = {new RectF(), new RectF(), new RectF(), new RectF()};
+    private final RectF battleCancel = new RectF();
+    private int battleButtonsMenu; // which menu the drawn buttons belong to
+    private long lastKeyQueueMs;
 
     public DualScreenView(Context context) {
         super(context);
@@ -136,8 +148,49 @@ public final class DualScreenView extends View {
                     }
                 }
             }
+            if (tab == TAB_BATTLE && state.inBattle) {
+                handleBattleTouch(event.getX(), event.getY());
+            }
         }
         return true;
+    }
+
+    /** Walks the in-game 2x2 cursor from `from` to `to`, then confirms. */
+    private void queueGridSelection(int from, int to, boolean confirm) {
+        java.util.List<Integer> seq = new java.util.ArrayList<>();
+        int dx = (to & 1) - (from & 1);
+        int dy = ((to >> 1) & 1) - ((from >> 1) & 1);
+        if (dx > 0) { seq.add(KEY_RIGHT); seq.add(0); seq.add(0); }
+        if (dx < 0) { seq.add(KEY_LEFT); seq.add(0); seq.add(0); }
+        if (dy > 0) { seq.add(KEY_DOWN); seq.add(0); seq.add(0); }
+        if (dy < 0) { seq.add(KEY_UP); seq.add(0); seq.add(0); }
+        if (confirm) { seq.add(KEY_A); seq.add(0); }
+        int[] masks = new int[seq.size()];
+        for (int i = 0; i < masks.length; i++) masks[i] = seq.get(i);
+        DualScreenBridge.nativeQueueKeys(masks);
+    }
+
+    private void handleBattleTouch(float x, float y) {
+        long now = System.currentTimeMillis();
+        if (now - lastKeyQueueMs < 350) {
+            return; // let the previous selection land first
+        }
+        if (state.battleMenu != battleButtonsMenu || state.battleMenu == 0) {
+            return;
+        }
+        if (battleCancel.contains(x, y) && state.battleMenu == 2) {
+            lastKeyQueueMs = now;
+            DualScreenBridge.nativeQueueKeys(new int[] {KEY_B, 0});
+            return;
+        }
+        for (int i = 0; i < 4; i++) {
+            if (battleButtons[i].contains(x, y) && !battleButtons[i].isEmpty()) {
+                int cursor = state.battleMenu == 1 ? state.actionCursor : state.moveCursor;
+                lastKeyQueueMs = now;
+                queueGridSelection(cursor, i, true);
+                return;
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -384,31 +437,76 @@ public final class DualScreenView extends View {
 
         DualScreenState.Mon self = state.battlePlayerMon;
         float headerTop = contentHeight * 0.30f;
-        f.draw(canvas, self.nick + "  Lv" + self.level + "  " + self.hp + "/" + self.maxHp + " HP",
-                pad * 1.5f, headerTop, scale, TEXT_DARK, TEXT_SHADOW);
+        String headline = self.nick + "  Lv" + self.level + "  " + self.hp + "/" + self.maxHp + " HP";
+        if (state.battleMenu == 0) {
+            headline = headline + "   ...";
+        }
+        f.draw(canvas, headline, pad * 1.5f, headerTop, scale, TEXT_DARK, TEXT_SHADOW);
+
+        for (RectF r : battleButtons) r.setEmpty();
+        battleCancel.setEmpty();
+        battleButtonsMenu = state.battleMenu;
 
         float gridTop = headerTop + GbaFont.LINE_HEIGHT * scale + pad;
-        float cellH = (contentHeight - gridTop - pad * 2) / 2;
-        float cellW = (getWidth() - pad * 3) / 2;
-        for (int i = 0; i < 4; i++) {
-            float left = pad + (i % 2) * (cellW + pad);
-            float top = gridTop + (i / 2) * (cellH + pad);
-            RectF cell = new RectF(left, top, left + cellW, top + cellH);
-            if (i < self.moves.size()) {
-                drawBar(canvas, cell, false, null, scale);
-                DualScreenState.Move move = self.moves.get(i);
-                float inset = cellH * 0.16f;
-                f.draw(canvas, move.name, cell.left + inset, cell.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
-                drawTypeBadge(canvas, move.type, cell.left + inset,
-                        cell.bottom - inset - cellH * 0.24f, cellH * 0.24f);
-                String pp = "PP " + move.pp + "/" + move.maxPp;
-                float w = f.measure(pp, scale * 0.9f);
-                f.draw(canvas, pp, cell.right - inset - w,
-                        cell.bottom - inset - GbaFont.LINE_HEIGHT * scale * 0.9f,
-                        scale * 0.9f, move.pp == 0 ? HP_RED : TEXT_DARK, TEXT_SHADOW);
-            } else {
-                paint.setColor(0x44A88848);
-                canvas.drawRoundRect(cell, 8, 8, paint);
+
+        if (state.battleMenu == 1) {
+            // Action menu: FIGHT / BAG / POKEMON / RUN, Gen 4 style.
+            String[] labels = {"FIGHT", "BAG", "POKéMON", "RUN"};
+            int[] colors = {0xFFD05050, 0xFFE0A048, 0xFF58A868, 0xFF5880C8};
+            int[] borders = {0xFF984040, 0xFFA87838, 0xFF3C7A48, 0xFF405E98};
+            float cellH = (contentHeight - gridTop - pad * 2) / 2;
+            float cellW = (getWidth() - pad * 3) / 2;
+            for (int i = 0; i < 4; i++) {
+                float left = pad + (i % 2) * (cellW + pad);
+                float top = gridTop + (i / 2) * (cellH + pad);
+                RectF cell = new RectF(left, top, left + cellW, top + cellH);
+                battleButtons[i].set(cell);
+                paint.setColor(borders[i]);
+                canvas.drawRoundRect(cell, 14, 14, paint);
+                RectF inner = new RectF(cell);
+                inner.inset(5, 5);
+                paint.setColor(colors[i]);
+                canvas.drawRoundRect(inner, 10, 10, paint);
+                float w = f.measure(labels[i], scale * 1.25f);
+                f.draw(canvas, labels[i], cell.centerX() - w / 2,
+                        cell.centerY() - GbaFont.LINE_HEIGHT * scale * 1.25f / 2,
+                        scale * 1.25f, TEXT_WHITE, borders[i]);
+            }
+        } else {
+            // Move grid: interactive during move select, dimmed otherwise.
+            boolean active = state.battleMenu == 2;
+            float cancelH = active ? contentHeight * 0.085f : 0;
+            float cellH = (contentHeight - gridTop - pad * 2 - cancelH - (active ? pad : 0)) / 2;
+            float cellW = (getWidth() - pad * 3) / 2;
+            for (int i = 0; i < 4; i++) {
+                float left = pad + (i % 2) * (cellW + pad);
+                float top = gridTop + (i / 2) * (cellH + pad);
+                RectF cell = new RectF(left, top, left + cellW, top + cellH);
+                if (i < self.moves.size()) {
+                    if (active) {
+                        battleButtons[i].set(cell);
+                    }
+                    drawBar(canvas, cell, active, null, scale);
+                    DualScreenState.Move move = self.moves.get(i);
+                    float inset = cellH * 0.16f;
+                    f.draw(canvas, move.name, cell.left + inset, cell.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
+                    drawTypeBadge(canvas, move.type, cell.left + inset,
+                            cell.bottom - inset - cellH * 0.26f, cellH * 0.26f);
+                    String pp = "PP " + move.pp + "/" + move.maxPp;
+                    float w = f.measure(pp, scale * 0.9f);
+                    f.draw(canvas, pp, cell.right - inset - w,
+                            cell.bottom - inset - GbaFont.LINE_HEIGHT * scale * 0.9f,
+                            scale * 0.9f, move.pp == 0 ? HP_RED : TEXT_DARK, TEXT_SHADOW);
+                } else {
+                    paint.setColor(0x44A88848);
+                    canvas.drawRoundRect(cell, 8, 8, paint);
+                }
+            }
+            if (active) {
+                RectF cancel = new RectF(pad, gridTop + cellH * 2 + pad * 2,
+                        getWidth() - pad, gridTop + cellH * 2 + pad * 2 + cancelH);
+                battleCancel.set(cancel);
+                drawBar(canvas, cancel, false, "CANCEL", scale * 0.9f);
             }
         }
     }

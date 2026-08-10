@@ -1,4 +1,7 @@
 #include "global.h"
+#ifdef PLATFORM_SDL2
+#include "platform/dualscreen.h"
+#endif
 #include "battle.h"
 #include "battle_anim.h"
 #include "battle_controllers.h"
@@ -2961,6 +2964,26 @@ void BattlePutTextOnWindow(const u8 *text, u8 windowId)
     bool32 copyToVram;
     struct TextPrinterTemplate printerTemplate;
     u8 speed;
+
+#ifdef PLATFORM_SDL2
+    // The bottom screen renders the action and move menus; suppress their
+    // text on the top screen (message box and prompts stay).
+    if (DualScreen_BattleUiActive())
+    {
+        switch (windowId)
+        {
+        case B_WIN_ACTION_MENU:
+        case B_WIN_MOVE_NAME_1:
+        case B_WIN_MOVE_NAME_2:
+        case B_WIN_MOVE_NAME_3:
+        case B_WIN_MOVE_NAME_4:
+        case B_WIN_PP:
+        case B_WIN_PP_REMAINING:
+        case B_WIN_MOVE_TYPE:
+            return;
+        }
+    }
+#endif
 
     if (windowId & B_WIN_COPYTOVRAM)
     {

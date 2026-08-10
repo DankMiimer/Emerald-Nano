@@ -1,4 +1,7 @@
 #include "global.h"
+#ifdef PLATFORM_SDL2
+#include "platform/dualscreen.h"
+#endif
 #include "battle.h"
 #include "battle_anim.h"
 #include "battle_arena.h"
@@ -1530,6 +1533,11 @@ static void MoveSelectionDestroyCursorAt(u8 cursorPosition)
 void ActionSelectionCreateCursorAt(u8 cursorPosition, u8 baseTileNum)
 {
     u16 src[2];
+#ifdef PLATFORM_SDL2
+    // The bottom screen renders the action menu; keep the top screen clean.
+    if (DualScreen_BattleUiActive() && DualScreen_PlayerAtActionSelect())
+        return;
+#endif
     src[0] = 1;
     src[1] = 2;
 
@@ -3145,3 +3153,29 @@ static void PlayerHandleEndLinkBattle(void)
 static void PlayerCmdEnd(void)
 {
 }
+
+#ifdef PLATFORM_SDL2
+// Dual-screen bridge accessors (see platform/dualscreen.h): report whether a
+// player-controlled battler is waiting on the action or move menu.
+u32 DualScreen_PlayerAtActionSelect(void)
+{
+    u32 i;
+    for (i = 0; i < gBattlersCount; i++)
+    {
+        if (gBattlerControllerFuncs[i] == HandleInputChooseAction)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+u32 DualScreen_PlayerAtMoveSelect(void)
+{
+    u32 i;
+    for (i = 0; i < gBattlersCount; i++)
+    {
+        if (gBattlerControllerFuncs[i] == HandleInputChooseMove)
+            return TRUE;
+    }
+    return FALSE;
+}
+#endif

@@ -43,6 +43,9 @@ public final class DualScreenState {
     public boolean inGame;
     public boolean inBattle;
     public int battleKind; // 0 wild, 1 trainer
+    public int battleMenu; // 0 none, 1 action select, 2 move select
+    public int actionCursor;
+    public int moveCursor;
     public String playerName = "";
     public int playerGender;
     public int money;
@@ -140,6 +143,9 @@ public final class DualScreenState {
             JSONObject battle = root.optJSONObject("battle");
             if (battle != null) {
                 state.battleKind = battle.optInt("kind");
+                state.battleMenu = battle.optInt("menu");
+                state.actionCursor = battle.optInt("actionCursor");
+                state.moveCursor = battle.optInt("moveCursor");
                 JSONObject p = battle.optJSONObject("playerMon");
                 if (p != null) state.battlePlayerMon = parseMon(p);
                 JSONObject e = battle.optJSONObject("enemyMon");

@@ -11,4 +11,18 @@ void DualScreen_FrameHook(void);
 // Thread-safe; may be called from any thread.
 const char *DualScreen_GetSnapshotJson(void);
 
+// True when the bottom screen owns the battle menus: the top screen then
+// suppresses the action/move menu text and cursor, and input can arrive
+// through the virtual key queue.
+u32 DualScreen_BattleUiActive(void);
+
+// One frame's worth of synthetic GBA button state, consumed by
+// Platform_GetKeyInput. Returns 0 when the queue is empty.
+u16 DualScreen_ConsumeVirtualKeys(void);
+
+// Implemented in battle_controller_player.c: whether the player-controlled
+// battler is currently on the action menu / move menu.
+u32 DualScreen_PlayerAtActionSelect(void);
+u32 DualScreen_PlayerAtMoveSelect(void);
+
 #endif // GUARD_PLATFORM_DUALSCREEN_H
