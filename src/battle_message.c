@@ -2975,13 +2975,12 @@ void BattlePutTextOnWindow(const u8 *text, u8 windowId)
     {
         switch (windowId)
         {
+        case B_WIN_ACTION_PROMPT:
+            // The top screen stays on the full-width message layout during
+            // menus (see DualScreen_FrameHook), so print the prompt there.
+            windowId = B_WIN_MSG;
+            break;
         case B_WIN_ACTION_MENU:
-            // Erase the action menu box entirely (frame included): blank the
-            // right half of the textbox band with the transparent tile. The
-            // prompt on the left stays.
-            FillBgTilemapBufferRect(0, 0, 15, 35, 17, 5, 0);
-            CopyBgTilemapBufferToVram(0);
-            return;
         case B_WIN_MOVE_NAME_1:
         case B_WIN_MOVE_NAME_2:
         case B_WIN_MOVE_NAME_3:

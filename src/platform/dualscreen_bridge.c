@@ -494,12 +494,14 @@ void DualScreen_FrameHook(void)
         strcpy(sBuffers[1], sBuffers[0]);
     }
 
-    // While the bottom screen owns the move menu, keep the top screen's
-    // textbox on the action/prompt band instead of the move grid: the
-    // "What will {x} do?" prompt stays visible and the move menu art never
-    // shows (BG0 scroll selects which band of the battle textbox is shown).
-    if (DualScreen_BattleUiActive() && gMain.inBattle && DualScreen_PlayerAtMoveSelect())
-        gBattle_BG0_Y = DISPLAY_HEIGHT;
+    // While the bottom screen owns the battle menus, keep the top screen's
+    // textbox on the plain full-width message layout: the action/move menu
+    // art is never shown at all (BG0 scroll selects which band of the battle
+    // textbox is visible), and the "What will {x} do?" prompt is printed
+    // into the message window by BattlePutTextOnWindow.
+    if (DualScreen_BattleUiActive() && gMain.inBattle
+     && (DualScreen_PlayerAtMoveSelect() || DualScreen_PlayerAtActionSelect()))
+        gBattle_BG0_Y = 0;
 
     if (++sFrameCounter % SNAPSHOT_FRAME_INTERVAL != 0)
         return;
