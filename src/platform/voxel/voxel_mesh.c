@@ -182,6 +182,12 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
 void VoxelMesh_DrawTile(int mapX, int mapY, VoxelVisualShape shape, int metatileId)
 {
     if (shape == VOXEL_SHAPE_VOID) return;
+    
+    // If this tile was consumed by VoxelMesh_BuildWalls (i.e. drawn as a vertical face),
+    // we still want to draw it as a flat floor so there's ground underneath/behind it.
+    if (gVoxelWallConsumed && gVoxelWallConsumed[mapY * 512 + mapX]) {
+        shape = VOXEL_SHAPE_FLOOR;
+    }
 
     float wx = (float)mapX;
     float wz = (float)mapY;

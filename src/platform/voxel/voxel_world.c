@@ -57,52 +57,27 @@ VoxelVisualShape VoxelWorld_ClassifyTile(int mapX, int mapY)
     if (gMapHeader.mapType == MAP_TYPE_INDOOR || gMapHeader.mapType == MAP_TYPE_SECRET_BASE) {
         if (metatileId == 622) return VOXEL_SHAPE_VOID; // Black out-of-bounds area
 
-        if (metatileId >= 512) {
-            switch (metatileId) {
-                // Wall Tops (Row 1 and Caps)
-                case 542: case 527: case 543: 
-                case 560: case 561: case 562: case 563: case 564: 
-                case 520: case 521: case 525: // Top of map/bookshelves
-                    return VOXEL_SHAPE_WALL_TOP;
-                
-                // Walls (Row 2, and Row 1 for door frame)
-                case 568: case 569: case 571: case 572: 
-                case 528: case 529: // Map/picture lower part
-                case 550: // Door frame
-                case 570: // TV (Temp wall for debug)
-                case 533: case 534: // Shelves (Temp wall for debug)
-                    return VOXEL_SHAPE_WALL;
-
-                // Furniture against wall (DISABLED FOR DEBUG)
-                // case 570: return VOXEL_SHAPE_TV;
-                // case 533: case 534: return VOXEL_SHAPE_SHELF;
-
-                // Freestanding objects (DISABLED FOR DEBUG)
-                // case 576: case 577: case 584: case 585: case 586: return VOXEL_SHAPE_TABLE;
-                // case 565: case 558: case 566: return VOXEL_SHAPE_CHAIR;
-                // Counters (DISABLED FOR DEBUG)
-                // case 536: case 537: case 538: case 539: case 540: case 541:
-                // case 544: case 545: case 546: case 547: case 548: case 549:
-                // case 552: case 553: case 554: case 555: case 556: case 557:
-                //    return VOXEL_SHAPE_COUNTER;
-
-                case 578: return VOXEL_SHAPE_VERTICAL_SPRITE;
-
-                // Architecture
-                case 589: return VOXEL_SHAPE_STAIRS;
-                case 514: case 515: return VOXEL_SHAPE_DOOR;
-                case 513: case 517: return VOXEL_SHAPE_FLOOR;
-                default: break;
+        // Common Furniture Behaviors
+        if (behavior == MB_PC || behavior == MB_TELEVISION || metatileId == 570) return VOXEL_SHAPE_TV;
+        if (behavior == MB_PICTURE_BOOK_SHELF || behavior == MB_BOOKSHELF || behavior == MB_POKEMON_CENTER_BOOKSHELF || behavior == MB_SHOP_SHELF || metatileId == 533 || metatileId == 534) return VOXEL_SHAPE_SHELF;
+        if (behavior == MB_COUNTER) return VOXEL_SHAPE_COUNTER;
+        if (MetatileBehavior_IsWarpDoor(behavior) || MetatileBehavior_IsDoor(behavior) || metatileId == 514 || metatileId == 515) return VOXEL_SHAPE_DOOR;
+        
+        // Some specific visual exceptions
+        if (metatileId == 576 || metatileId == 577 || metatileId == 584 || metatileId == 585 || metatileId == 586) return VOXEL_SHAPE_TABLE;
+        if (metatileId == 565 || metatileId == 558 || metatileId == 566) return VOXEL_SHAPE_CHAIR;
+        if (metatileId == 578) return VOXEL_SHAPE_VERTICAL_SPRITE;
+        if (metatileId == 589) return VOXEL_SHAPE_STAIRS;
+        
+        // Dynamic Wall Classification
+        if (collision != 0) {
+            u8 aboveCollision = MapGridGetCollisionAt(backupX, backupY - 1);
+            if (aboveCollision != 0) {
+                return VOXEL_SHAPE_WALL; // Tall wall or continuous impassable structure
+            } else {
+                return VOXEL_SHAPE_LOW_BLOCK; // Short obstacle (table, pot, etc)
             }
         }
-        
-        if (behavior == MB_IMPASSABLE_EAST || behavior == MB_IMPASSABLE_WEST || behavior == MB_IMPASSABLE_NORTH || behavior == MB_IMPASSABLE_SOUTH || behavior == MB_PICTURE_BOOK_SHELF || behavior == MB_BOOKSHELF || behavior == MB_POKEMON_CENTER_BOOKSHELF || behavior == MB_SHOP_SHELF || behavior == MB_REGION_MAP) {
-            return VOXEL_SHAPE_WALL;
-        }
-        if (behavior == MB_PC || behavior == MB_TELEVISION) return VOXEL_SHAPE_PC;
-        if (behavior == MB_COUNTER) return VOXEL_SHAPE_COUNTER;
-        if (MetatileBehavior_IsWarpDoor(behavior) || MetatileBehavior_IsDoor(behavior)) return VOXEL_SHAPE_DOOR;
-        if (collision != 0) return VOXEL_SHAPE_LOW_BLOCK;
         
         return VOXEL_SHAPE_FLOOR;
     }
@@ -116,9 +91,14 @@ VoxelVisualShape VoxelWorld_ClassifyTile(int mapX, int mapY)
     }
     if (MetatileBehavior_IsWarpDoor(behavior) || MetatileBehavior_IsDoor(behavior)) return VOXEL_SHAPE_DOOR;
     
+    // Dynamic Wall Classification for Overworld
     if (collision != 0) {
-        if (metatileId >= 512) return VOXEL_SHAPE_WALL;
-        return VOXEL_SHAPE_WALL;
+        u8 aboveCollision = MapGridGetCollisionAt(backupX, backupY - 1);
+        if (aboveCollision != 0) {
+            return VOXEL_SHAPE_WALL; // Cliff, tree, building
+        } else {
+            return VOXEL_SHAPE_LOW_BLOCK; // Fence, rock, sign
+        }
     }
 
     return VOXEL_SHAPE_FLOOR;
