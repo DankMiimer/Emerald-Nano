@@ -762,7 +762,7 @@ JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_n
     if (tiles == NULL || palette == NULL)
         return NULL;
     if (frame == 1)
-        tiles += 0x400; // second animation frame, stacked below the first
+        tiles += 0x200; // second animation frame: 32x32 4bpp = 0x200 bytes each
 
     // First frame only: 32x32 4bpp, 4x4 tiles of 8x8, 32 bytes per tile.
     for (tileY = 0; tileY < 4; tileY++)
