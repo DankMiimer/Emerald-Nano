@@ -22,7 +22,12 @@ struct SpeciesInfo gSpeciesInfo[NUM_SPECIES];
 struct BattleMove gBattleMoves[MOVES_COUNT];
 struct Item gItems[ITEMS_COUNT];
 
+static bool sRAMShadowsInitialized = false;
+
 static void InitRAMShadows(void) {
+    if (sRAMShadowsInitialized) return;
+    sRAMShadowsInitialized = true;
+    
     // Determine size of gWildMonHeaders_ROM
     int numWildHeaders = 0;
     while (gWildMonHeaders_ROM[numWildHeaders].mapGroup != 0xFF) { // MAP_GROUP(MAP_UNDEFINED) is usually 0xFF
@@ -255,6 +260,7 @@ static void LoadStarterOverrides(LoadedMod *mod) {
 }
 
 void ModManager_Init(void) {
+    InitRAMShadows();
 
     if (!gModsEnabled) {
         fprintf(stderr, "[Mods] Disabled\n");
@@ -307,7 +313,6 @@ void ModManager_Init(void) {
     // Sort by priority descending
     qsort(sLoadedMods, sNumLoadedMods, sizeof(LoadedMod), CompareMods);
 
-    InitRAMShadows();
     for (int i = 0; i < sNumLoadedMods; i++) {
         fprintf(stderr, "[Mods] Loading %s\n", sLoadedMods[i].id);
         LoadTrainerOverrides(&sLoadedMods[i]);
@@ -360,7 +365,6 @@ const struct Trainer *ModManager_GetTrainer(u16 trainerId) {
 bool8 ModManager_GetTrainerFrontPicOverride(u16 trainerPicId, void *destBuffer) {
     if (!gModsEnabled) return FALSE;
 
-    InitRAMShadows();
     for (int i = 0; i < sNumLoadedMods; i++) {
         char path[512];
         snprintf(path, sizeof(path), "%s/graphics/trainer_front_pics/%d.4bpp", sLoadedMods[i].path, trainerPicId);

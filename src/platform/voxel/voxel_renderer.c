@@ -37,24 +37,37 @@ static void BuildVoxelAtlas(void)
 
     const struct MapLayout *layout = gMapHeader.mapLayout;
 
-    uint8_t *primTiles = calloc(1, 512 * 32);
-    uint8_t *secTiles  = calloc(1, 512 * 32);
+    uint8_t *primTiles = calloc(1, 65536);
+    uint8_t *secTiles  = calloc(1, 65536);
 
     if (layout->primaryTileset) {
         if (layout->primaryTileset->isCompressed)
             LZDecompressWram(layout->primaryTileset->tiles, primTiles);
         else
-            memcpy(primTiles, layout->primaryTileset->tiles, 512 * 32);
+            memcpy(primTiles, layout->primaryTileset->tiles, 16384);
     }
 
     if (layout->secondaryTileset) {
         if (layout->secondaryTileset->isCompressed)
             LZDecompressWram(layout->secondaryTileset->tiles, secTiles);
         else
-            memcpy(secTiles, layout->secondaryTileset->tiles, 512 * 32);
+            memcpy(secTiles, layout->secondaryTileset->tiles, 16384);
+    }
+
+    bool usedMetatiles[1024] = {false};
+    int mapArea = layout->width * layout->height;
+    for (int i = 0; i < mapArea; i++) {
+        usedMetatiles[layout->map[i] & 0x3FF] = true;
+    }
+    for (int i = 0; i < 4; i++) {
+        if (layout->border) {
+            usedMetatiles[layout->border[i] & 0x3FF] = true;
+        }
     }
 
     for (int m = 0; m < 1024; m++) {
+        if (!usedMetatiles[m]) continue;
+        
         const u16 *metatileData = NULL;
         if (m < 512) {
             if (layout->primaryTileset && layout->primaryTileset->metatiles)
@@ -171,9 +184,9 @@ static void GetSpriteDimensions(u8 shape, u8 size, int *w, int *h)
     }
 }
 
-static GLuint sObjectEventTex[16] = {0};
-static int    sObjectEventW[16] = {16};
-static int    sObjectEventH[16] = {32};
+static GLuint sObjectEventTex[64] = {0};
+static int    sObjectEventW[64] = {16};
+static int    sObjectEventH[64] = {32};
 
 static void UpdateObjectSpriteTexture(struct Sprite *sprite, GLuint *texOut, int *wOut, int *hOut)
 {
@@ -212,7 +225,9 @@ static void UpdateObjectSpriteTexture(struct Sprite *sprite, GLuint *texOut, int
     for (int ty = 0; ty < tilesY; ty++) {
         for (int tx = 0; tx < tilesX; tx++) {
             int tileIdx   = ty * tilesX + tx;
-            u8 *tileData  = vramBase + (tileBase + tileIdx) * 32;
+            int offset = (tileBase + tileIdx) * 32;
+            if (offset >= 0x8000) offset = 0; // prevent out-of-bounds
+            u8 *tileData  = vramBase + offset;
 
             for (int py = 0; py < 8; py++) {
                 for (int px = 0; px < 8; px++) {
@@ -303,6 +318,7 @@ static float GetMovementProgress(const struct ObjectEvent *obj, const struct Spr
 static bool GetVoxelObjectWorldPos(struct ObjectEvent *obj, float *outX, float *outZ)
 {
     if (!obj || !obj->active) return false;
+    if (obj->spriteId >= 64) return false; // MAX_SPRITES = 64
     struct Sprite *sprite = &gSprites[obj->spriteId];
 
     // Convert backup-layout coords to map-local coords
@@ -459,7 +475,9 @@ void VoxelRenderer_RenderFrame(void)
 
     // ---- Get canonical player world position ----
     float playerWorldX = 0.0f, playerWorldZ = 0.0f;
-    GetVoxelObjectWorldPos(&gObjectEvents[gPlayerAvatar.objectEventId], &playerWorldX, &playerWorldZ);
+    if (gPlayerAvatar.objectEventId < 16) {
+        GetVoxelObjectWorldPos(&gObjectEvents[gPlayerAvatar.objectEventId], &playerWorldX, &playerWorldZ);
+    }
 
     // Billboard is centered on the tile. Add 0.5 so player stands in the middle.
     float billX = playerWorldX + 0.5f;
@@ -475,9 +493,12 @@ void VoxelRenderer_RenderFrame(void)
 
     // ---- Print map info once per map load ----
     if (!sPrintedOnce) {
-        struct ObjectEvent *playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
-        int rawX = playerObj->currentCoords.x;
-        int rawY = playerObj->currentCoords.y;
+        int rawX = 0, rawY = 0;
+        if (gPlayerAvatar.objectEventId < 16) {
+            struct ObjectEvent *playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
+            rawX = playerObj->currentCoords.x;
+            rawY = playerObj->currentCoords.y;
+        }
         int localX = rawX - MAP_OFFSET;
         int localZ = rawY - MAP_OFFSET;
         printf("[VoxelMap] map=%d:%d layout=%d\n",
@@ -582,22 +603,7 @@ void VoxelRenderer_RenderFrame(void)
         }
     }
 
-    // ---- Debug: movement logging every 60 frames ----
-    static int sLogCooldown = 0;
-    if (sLogCooldown-- <= 0) {
-        sLogCooldown = 60;
-        struct ObjectEvent *obj = &gObjectEvents[gPlayerAvatar.objectEventId];
-        struct Sprite *sprite = &gSprites[obj->spriteId];
-        float t = GetMovementProgress(obj, sprite);
-        const char *dirNames[] = {"NONE","SOUTH","NORTH","WEST","EAST","SW","SE","NW","NE"};
-        int dir = (int)(u16)sprite->data[3];
-        if (dir > 8) dir = 0;
-        printf("[VoxelMove] dir=%s prev=(%d,%d) cur=(%d,%d) t=%.3f world=(%.3f,%.3f)\n",
-               dirNames[dir],
-               obj->previousCoords.x - MAP_OFFSET, obj->previousCoords.y - MAP_OFFSET,
-               obj->currentCoords.x  - MAP_OFFSET, obj->currentCoords.y  - MAP_OFFSET,
-               t, playerWorldX, playerWorldZ);
-    }
+    // Movement debug log removed
 
     // ---- Object Events (NPCs, Player, etc.) ----
     glDisable(GL_TEXTURE_2D);

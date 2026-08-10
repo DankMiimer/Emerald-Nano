@@ -6,11 +6,25 @@
 #include <GL/gl.h>
 #include <GL/gl.h>
 #include <stdio.h>
+#include <stdlib.h>
 
-bool gVoxelWallConsumed[256][256] = {false};
+bool *gVoxelWallConsumed = NULL;
 
 void VoxelMesh_BuildWalls(int mapW, int mapH)
 {
+    if (gVoxelWallConsumed == NULL) {
+        gVoxelWallConsumed = calloc(512 * 512, sizeof(bool));
+    }
+    
+    // Clear array up to actual map bounds
+    if (gVoxelWallConsumed) {
+        for (int y = 0; y < mapH; y++) {
+            for (int x = 0; x < mapW; x++) {
+                gVoxelWallConsumed[y * 512 + x] = false;
+            }
+        }
+    }
+
     float atlasW = 512.0f;
     float atlasH = 512.0f;
     float thick = 0.1f;
@@ -19,7 +33,7 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
 
     for (int y = 0; y < mapH; y++) {
         for (int x = 0; x < mapW; x++) {
-            if (gVoxelWallConsumed[y][x]) continue;
+            if (gVoxelWallConsumed[y * 512 + x]) continue;
 
             VoxelVisualShape shape = VoxelWorld_ClassifyTile(x, y);
 
@@ -54,12 +68,12 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
                 float t_u1 = t_u0 + (16.0f / atlasW);
                 float t_v1 = t_v0 + (16.0f / atlasH);
 
-                gVoxelWallConsumed[y][x] = true;
-                if (y - 1 >= 0) gVoxelWallConsumed[y - 1][x] = true;
+                gVoxelWallConsumed[y * 512 + x] = true;
+                if (y - 1 >= 0) gVoxelWallConsumed[(y - 1) * 512 + x] = true;
                 if (y - 2 >= 0) {
                     VoxelVisualShape capShape = VoxelWorld_ClassifyTile(x, y - 2);
                     if (capShape == VOXEL_SHAPE_WALL_TOP || capShape == VOXEL_SHAPE_VOID) {
-                        gVoxelWallConsumed[y - 2][x] = true;
+                        gVoxelWallConsumed[(y - 2) * 512 + x] = true;
                     }
                 }
 
