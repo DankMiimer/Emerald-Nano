@@ -9,6 +9,12 @@ import java.util.List;
 
 /** Parsed snapshot of game state, produced from the bridge's JSON. */
 public final class DualScreenState {
+    public static final class BagItem {
+        public int id;
+        public String name = "";
+        public int quantity;
+    }
+
     public static final class Move {
         public int id;
         public String name = "";
@@ -45,7 +51,10 @@ public final class DualScreenState {
     public int minutes;
     public String mapName = "";
     public int mapsec = -1;
+    public int posX;
+    public int posY;
     public final List<Mon> party = new ArrayList<>();
+    public final List<List<BagItem>> bag = new ArrayList<>();
     public Mon battlePlayerMon;
     public Mon battleEnemyMon;
 
@@ -103,6 +112,24 @@ public final class DualScreenState {
                 state.minutes = player.optInt("minutes");
                 state.mapName = player.optString("mapName");
                 state.mapsec = player.optInt("mapsec", -1);
+                state.posX = player.optInt("x");
+                state.posY = player.optInt("y");
+            }
+            JSONArray bag = root.optJSONArray("bag");
+            if (bag != null) {
+                for (int p = 0; p < bag.length(); p++) {
+                    List<BagItem> pocket = new ArrayList<>();
+                    JSONArray items = bag.getJSONArray(p);
+                    for (int i = 0; i < items.length(); i++) {
+                        JSONObject io = items.getJSONObject(i);
+                        BagItem item = new BagItem();
+                        item.id = io.optInt("id");
+                        item.name = io.optString("n");
+                        item.quantity = io.optInt("q");
+                        pocket.add(item);
+                    }
+                    state.bag.add(pocket);
+                }
             }
             JSONArray party = root.optJSONArray("party");
             if (party != null) {

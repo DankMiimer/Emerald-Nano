@@ -17,6 +17,7 @@
 #endif
 
 #include "global.h"
+#include "fonts.h"
 #include "main.h"
 #include "pokemon.h"
 #include "pokemon_icon.h"
@@ -272,9 +273,25 @@ static void WriteBattleMonJson(struct JsonWriter *w, struct BattlePokemon *mon)
     JsonPut(w, "]}");
 }
 
+// Reads pockets straight from the save block rather than through
+// gBagPockets: those runtime pointers are only wired by
+// SetBagItemsPointers() and hold garbage before then (caused a crash).
 static void WriteBagJson(struct JsonWriter *w)
 {
+    const struct ItemSlot *pockets[POCKETS_COUNT];
+    int capacities[POCKETS_COUNT];
     int pocket;
+
+    pockets[ITEMS_POCKET] = gSaveBlock1Ptr->bagPocket_Items;
+    capacities[ITEMS_POCKET] = BAG_ITEMS_COUNT;
+    pockets[BALLS_POCKET] = gSaveBlock1Ptr->bagPocket_PokeBalls;
+    capacities[BALLS_POCKET] = BAG_POKEBALLS_COUNT;
+    pockets[TMHM_POCKET] = gSaveBlock1Ptr->bagPocket_TMHM;
+    capacities[TMHM_POCKET] = BAG_TMHM_COUNT;
+    pockets[BERRIES_POCKET] = gSaveBlock1Ptr->bagPocket_Berries;
+    capacities[BERRIES_POCKET] = BAG_BERRIES_COUNT;
+    pockets[KEYITEMS_POCKET] = gSaveBlock1Ptr->bagPocket_KeyItems;
+    capacities[KEYITEMS_POCKET] = BAG_KEYITEMS_COUNT;
 
     JsonPut(w, "\"bag\":[");
     for (pocket = 0; pocket < POCKETS_COUNT; pocket++)
@@ -284,14 +301,15 @@ static void WriteBagJson(struct JsonWriter *w)
         if (pocket > 0)
             JsonPut(w, ",");
         JsonPut(w, "[");
-        for (pos = 0; pos < gBagPockets[pocket].capacity; pos++)
+        for (pos = 0; pos < capacities[pocket]; pos++)
         {
-            u16 itemId = BagGetItemIdByPocketPosition(pocket, pos);
+            u16 itemId = pockets[pocket][pos].itemId;
             u16 quantity;
             char itemName[24];
             if (itemId == ITEM_NONE || itemId >= ITEMS_COUNT)
                 continue;
-            quantity = BagGetQuantityByPocketPosition(pocket, pos);
+            // Bag quantities are XOR-encrypted with the save's key.
+            quantity = pockets[pocket][pos].quantity ^ (u16)gSaveBlock2Ptr->encryptionKey;
             DecodeGbaString(itemName, sizeof(itemName), GetItemName(itemId), ITEM_NAME_LENGTH);
             if (!first)
                 JsonPut(w, ",");
@@ -307,9 +325,28 @@ static void WriteBagJson(struct JsonWriter *w)
 
 static bool32 IsInGame(void)
 {
+    // Party/bag EWRAM holds garbage until a game is actually running (e.g. on
+    // the title screen of a save). The play-time counter only ticks in-game,
+    // so latch once it has been observed advancing.
+    static bool32 sSeenGameplay;
+    static u8 sLastPlayTimeSeconds;
+    static u8 sPlayTimeTicks;
+
     if (gSaveBlock1Ptr == NULL || gSaveBlock2Ptr == NULL)
         return FALSE;
-    if (gPlayerPartyCount == 0 && CalculatePlayerPartyCount() == 0)
+    if (gMain.callback2 == CB2_Overworld)
+        sSeenGameplay = TRUE;
+    if (gSaveBlock2Ptr->playTimeSeconds != sLastPlayTimeSeconds)
+    {
+        sLastPlayTimeSeconds = gSaveBlock2Ptr->playTimeSeconds;
+        if (++sPlayTimeTicks >= 2)
+            sSeenGameplay = TRUE;
+    }
+    if (!sSeenGameplay)
+        return FALSE;
+    // Read-only checks only: this runs on the frame thread, so nothing here
+    // may mutate game state (CalculatePlayerPartyCount writes the count).
+    if (gPlayerPartyCount == 0 || gPlayerPartyCount > PARTY_SIZE)
         return FALSE;
     return FlagGet(FLAG_SYS_POKEMON_GET);
 }
@@ -377,17 +414,20 @@ static void BuildSnapshot(char *buffer, int capacity)
 
         WriteBagJson(w);
 
-        if (gMain.inBattle)
+        if (gMain.inBattle && gBattlersCount > 0 && gBattlersCount <= MAX_BATTLERS_COUNT)
         {
             u8 playerBattler = GetBattlerAtPosition(B_POSITION_PLAYER_LEFT);
             u8 enemyBattler = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
-            JsonPut(w, "\"battle\":{\"kind\":%d,",
-                    (gBattleTypeFlags & BATTLE_TYPE_TRAINER) ? 1 : 0);
-            JsonPut(w, "\"playerMon\":");
-            WriteBattleMonJson(w, &gBattleMons[playerBattler]);
-            JsonPut(w, ",\"enemyMon\":");
-            WriteBattleMonJson(w, &gBattleMons[enemyBattler]);
-            JsonPut(w, "},");
+            if (playerBattler < MAX_BATTLERS_COUNT && enemyBattler < MAX_BATTLERS_COUNT)
+            {
+                JsonPut(w, "\"battle\":{\"kind\":%d,",
+                        (gBattleTypeFlags & BATTLE_TYPE_TRAINER) ? 1 : 0);
+                JsonPut(w, "\"playerMon\":");
+                WriteBattleMonJson(w, &gBattleMons[playerBattler]);
+                JsonPut(w, ",\"enemyMon\":");
+                WriteBattleMonJson(w, &gBattleMons[enemyBattler]);
+                JsonPut(w, "},");
+            }
         }
     }
 
@@ -449,6 +489,130 @@ JNIEXPORT jstring JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nat
     result = (*env)->NewStringUTF(env, sBuffers[sFrontBuffer]);
     SDL_UnlockMutex(sSnapshotMutex);
     return result;
+}
+
+// Implemented in region_map.c: access to the (static) region map graphics.
+extern const u16 *DualScreen_GetRegionMapPal(void);
+extern const u32 *DualScreen_GetRegionMapGfxLZ(void);
+extern const u32 *DualScreen_GetRegionMapTilemapLZ(void);
+#include "gba/syscall.h"
+
+static jint Bgr555ToArgb(u16 bgr)
+{
+    int r = (bgr & 0x1F) << 3;
+    int g = ((bgr >> 5) & 0x1F) << 3;
+    int b = ((bgr >> 10) & 0x1F) << 3;
+    return (jint)((0xFFu << 24) | (r << 16) | (g << 8) | b);
+}
+
+// The real Pokenav Hoenn map, composed from the game's own tileset/tilemap:
+// 240x160 ARGB pixels. The player marker goes at tile (rmx+1, rmy+2).
+JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetRegionMapImage(JNIEnv *env, jclass clazz)
+{
+    static u8 sGfx[16384];
+    static u16 sTilemap[2048];
+    jintArray result;
+    jint *pixels;
+    const u16 *pal = DualScreen_GetRegionMapPal();
+    int tx, ty, px, py;
+
+    LZ77UnCompWram(DualScreen_GetRegionMapGfxLZ(), sGfx);
+    LZ77UnCompWram(DualScreen_GetRegionMapTilemapLZ(), sTilemap);
+
+    pixels = malloc(240 * 160 * sizeof(jint));
+    if (pixels == NULL)
+        return NULL;
+
+    for (ty = 0; ty < 20; ty++)
+    for (tx = 0; tx < 30; tx++)
+    {
+        u16 entry = sTilemap[ty * 32 + tx];
+        u16 tile = entry & 0x3FF;
+        int hflip = (entry >> 10) & 1;
+        int vflip = (entry >> 11) & 1;
+        const u8 *src = &sGfx[tile * 64];
+        if (tile * 64 >= (int)sizeof(sGfx))
+            continue;
+        for (py = 0; py < 8; py++)
+        for (px = 0; px < 8; px++)
+        {
+            int sx = hflip ? 7 - px : px;
+            int sy = vflip ? 7 - py : py;
+            u8 colorIndex = src[sy * 8 + sx];
+            pixels[(ty * 8 + py) * 240 + tx * 8 + px] = Bgr555ToArgb(pal[colorIndex & 0x1F]);
+        }
+    }
+
+    result = (*env)->NewIntArray(env, 240 * 160);
+    if (result != NULL)
+        (*env)->SetIntArrayRegion(env, result, 0, 240 * 160, pixels);
+    free(pixels);
+    return result;
+}
+
+// The game's normal Latin font: one glyph per GBA charcode, 16x16 2bpp.
+// Returns [width[0..255], then 256*256 color indices (0 bg, 1 fg, 2 shadow)].
+#define FONT_GLYPH_COUNT 256
+JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetFontAtlas(JNIEnv *env, jclass clazz)
+{
+    jintArray result;
+    jint *data;
+    int glyph, tile, py, px;
+    int total = FONT_GLYPH_COUNT + FONT_GLYPH_COUNT * 16 * 16;
+
+    data = malloc(total * sizeof(jint));
+    if (data == NULL)
+        return NULL;
+
+    for (glyph = 0; glyph < FONT_GLYPH_COUNT; glyph++)
+    {
+        const u16 *rows = gFontNormalLatinGlyphs + 0x20 * glyph;
+        jint *out = data + FONT_GLYPH_COUNT + glyph * 256;
+        data[glyph] = gFontNormalLatinGlyphWidths[glyph];
+        memset(out, 0, 256 * sizeof(jint));
+        // Four 8x8 tiles: top-left, top-right, bottom-left, bottom-right.
+        // Each u16 is one 8-pixel row at 2bpp, pixel 0 in the low bits.
+        for (tile = 0; tile < 4; tile++)
+        {
+            int baseX = (tile & 1) * 8;
+            int baseY = (tile >> 1) * 8;
+            const u16 *tileRows = rows + tile * 8;
+            for (py = 0; py < 8; py++)
+            for (px = 0; px < 8; px++)
+                out[(baseY + py) * 16 + baseX + px] = (tileRows[py] >> (px * 2)) & 0x3;
+        }
+    }
+
+    result = (*env)->NewIntArray(env, total);
+    if (result != NULL)
+        (*env)->SetIntArrayRegion(env, result, 0, total, data);
+    free(data);
+    return result;
+}
+
+// The full region map location table (static game data), for the Map tab.
+JNIEXPORT jstring JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetRegionMapJson(JNIEnv *env, jclass clazz)
+{
+    static char json[16384];
+    struct JsonWriter writer = { json, 0, sizeof(json) };
+    struct JsonWriter *w = &writer;
+    int mapsec;
+
+    JsonPut(w, "[");
+    for (mapsec = 0; mapsec < MAPSEC_NONE; mapsec++)
+    {
+        char name[24];
+        DecodeGbaString(name, sizeof(name), gRegionMapEntries[mapsec].name, MAP_NAME_LENGTH);
+        if (mapsec > 0)
+            JsonPut(w, ",");
+        JsonPut(w, "{\"id\":%d,\"x\":%u,\"y\":%u,\"w\":%u,\"h\":%u,\"n\":",
+                mapsec, gRegionMapEntries[mapsec].x, gRegionMapEntries[mapsec].y,
+                gRegionMapEntries[mapsec].width, gRegionMapEntries[mapsec].height);
+        JsonPutString(w, name);
+        JsonPut(w, "}");
+    }
+    JsonPut(w, "]");
+    return (*env)->NewStringUTF(env, json);
 }
 
 JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetMonIcon(JNIEnv *env, jclass clazz, jint species)

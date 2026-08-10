@@ -2030,3 +2030,22 @@ static void CB_ExitFlyMap(void)
         break;
     }
 }
+
+#ifdef PLATFORM_SDL2
+// Accessors for the dual-screen bridge: the bottom screen renders the real
+// region map from the same data the game uses (see platform/dualscreen.h).
+const u16 *DualScreen_GetRegionMapPal(void)
+{
+    return sRegionMapBg_Pal;
+}
+
+const u32 *DualScreen_GetRegionMapGfxLZ(void)
+{
+    return sRegionMapBg_GfxLZ;
+}
+
+const u32 *DualScreen_GetRegionMapTilemapLZ(void)
+{
+    return sRegionMapBg_TilemapLZ;
+}
+#endif

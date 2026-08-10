@@ -23,6 +23,12 @@ public class PokeEmeraldActivity extends SDLActivity {
     private final Runnable snapshotPump = new Runnable() {
         @Override
         public void run() {
+            // Self-heal: the Thor's system UI can steal the bottom display and
+            // dismiss the presentation; re-show it whenever it is gone.
+            if (presentation == null || !presentation.isShowing()) {
+                presentation = null;
+                showBottomScreen();
+            }
             if (presentation != null && presentation.isShowing()) {
                 String json = DualScreenBridge.nativeGetSnapshotJson();
                 presentation.updateState(DualScreenState.parse(json));

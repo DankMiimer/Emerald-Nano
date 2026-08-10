@@ -3,17 +3,17 @@ package com.pokeemerald.experimental;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.util.SparseArray;
 import android.view.MotionEvent;
 import android.view.View;
 
 /**
- * Bottom-screen UI. Canvas-drawn, no external dependencies. Tabs along the
- * bottom edge; content area above renders the active tab from the latest
- * DualScreenState.
+ * Bottom-screen UI, styled after the game's own Pokenav: dotted mint
+ * background, cream menu bars, and the game's real font and graphics
+ * (all decoded at runtime from game data over the bridge).
  */
 public final class DualScreenView extends View {
     public static final int TAB_PARTY = 0;
@@ -34,25 +34,42 @@ public final class DualScreenView extends View {
         0xFF78C850, 0xFFF8D030, 0xFFF85888, 0xFF98D8D8, 0xFF7038F8, 0xFF705848
     };
 
-    // Emerald-ish palette.
-    private static final int BG = 0xFF10281C;
-    private static final int PANEL = 0xFF1C3A2A;
-    private static final int PANEL_LIGHT = 0xFF2A5540;
-    private static final int ACCENT = 0xFF58C88A;
-    private static final int TEXT_MAIN = 0xFFF0F8F0;
-    private static final int TEXT_DIM = 0xFF90B8A0;
+    // Pokenav palette.
+    private static final int BG_MINT = 0xFFD8F8E8;
+    private static final int BG_DOT = 0xFFB8E4CE;
+    private static final int HEADER_GREEN = 0xFF50C484;
+    private static final int HEADER_GREEN_DARK = 0xFF2E9A62;
+    private static final int BAR_CREAM = 0xFFF8F0B0;
+    private static final int BAR_CREAM_DARK = 0xFFE8CE7A;
+    private static final int BAR_BORDER = 0xFFA88848;
+    private static final int PANEL_WHITE = 0xFFFFFFFF;
+    private static final int PANEL_BORDER = 0xFF58585A;
+    private static final int TEXT_DARK = 0xFF484850;
+    private static final int TEXT_SHADOW = 0xFFD0D0C8;
+    private static final int TEXT_WHITE = 0xFFFFFFFF;
+    private static final int TEXT_GREEN_SHADOW = 0xFF2E9A62;
+    private static final int SEA_BLUE = 0xFF9CC7E8;
+    private static final int HP_GREEN = 0xFF58D080;
+    private static final int HP_YELLOW = 0xFFF8B050;
+    private static final int HP_RED = 0xFFF05868;
 
-    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private static final class MapEntry {
+        int id, x, y, w, h;
+        String name = "";
+    }
+
+    private final Paint paint = new Paint();
+    private final Paint pixelPaint = new Paint();
     private final SparseArray<Bitmap> iconCache = new SparseArray<>();
     private DualScreenState state = new DualScreenState();
     private int tab = TAB_PARTY;
+    private int bagPocket;
+    private java.util.List<MapEntry> mapEntries;
+    private Bitmap regionMap;
 
     public DualScreenView(Context context) {
         super(context);
-        setBackgroundColor(BG);
-        textPaint.setColor(TEXT_MAIN);
-        textPaint.setFakeBoldText(true);
+        pixelPaint.setFilterBitmap(false);
     }
 
     public void setState(DualScreenState next) {
@@ -62,6 +79,10 @@ public final class DualScreenView extends View {
         if (autoBattle) tab = TAB_BATTLE;
         if (autoParty) tab = TAB_PARTY;
         invalidate();
+    }
+
+    private GbaFont font() {
+        return GbaFont.get();
     }
 
     private Bitmap monIcon(int species) {
@@ -79,13 +100,21 @@ public final class DualScreenView extends View {
     }
 
     private float tabBarHeight() {
-        return getHeight() * 0.11f;
+        return getHeight() * 0.105f;
     }
 
     private RectF tabRect(int index) {
         float w = getWidth() / (float) TAB_NAMES.length;
         float top = getHeight() - tabBarHeight();
         return new RectF(index * w, top, (index + 1) * w, getHeight());
+    }
+
+    private static final String[] POCKET_NAMES = {"ITEMS", "BALLS", "TM-HM", "BERRIES", "KEY"};
+
+    private RectF pocketRect(int index) {
+        float w = getWidth() / (float) POCKET_NAMES.length;
+        float h = (getHeight() - tabBarHeight()) * 0.105f;
+        return new RectF(index * w, 0, (index + 1) * w, h);
     }
 
     @Override
@@ -98,73 +127,103 @@ public final class DualScreenView extends View {
                     return true;
                 }
             }
+            if (tab == TAB_BAG) {
+                for (int i = 0; i < POCKET_NAMES.length; i++) {
+                    if (pocketRect(i).contains(event.getX(), event.getY())) {
+                        bagPocket = i;
+                        invalidate();
+                        return true;
+                    }
+                }
+            }
         }
         return true;
     }
 
-    @Override
-    protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas);
-        drawTabBar(canvas);
-        if (!state.inGame) {
-            drawCenteredMessage(canvas, "Waiting for the adventure to start…");
-            return;
+    // ------------------------------------------------------------------
+    // Shared chrome
+    // ------------------------------------------------------------------
+
+    private void drawBackground(Canvas canvas) {
+        canvas.drawColor(BG_MINT);
+        paint.setColor(BG_DOT);
+        float step = getWidth() / 40f;
+        float radius = step * 0.10f;
+        for (float y = step / 2; y < getHeight(); y += step) {
+            for (float x = step / 2; x < getWidth(); x += step) {
+                canvas.drawCircle(x, y, radius, paint);
+            }
         }
-        switch (tab) {
-        case TAB_PARTY:  drawParty(canvas); break;
-        case TAB_BATTLE: drawBattle(canvas); break;
-        case TAB_MAP:    drawPlaceholder(canvas, "Map — coming soon"); break;
-        case TAB_BAG:    drawPlaceholder(canvas, "Bag — coming soon"); break;
-        case TAB_CARD:   drawTrainerCard(canvas); break;
+    }
+
+    private void drawBar(Canvas canvas, RectF r, boolean selected, String label, float textScale) {
+        paint.setColor(BAR_BORDER);
+        canvas.drawRoundRect(r, 6, 6, paint);
+        RectF inner = new RectF(r);
+        inner.inset(3, 3);
+        paint.setColor(selected ? BAR_CREAM : BAR_CREAM_DARK);
+        canvas.drawRoundRect(inner, 4, 4, paint);
+        if (selected) {
+            paint.setColor(0xFFF8B850);
+            RectF edge = new RectF(inner.left, inner.bottom - 6, inner.right, inner.bottom);
+            canvas.drawRoundRect(edge, 3, 3, paint);
+        }
+        GbaFont f = font();
+        if (f != null && label != null) {
+            float w = f.measure(label, textScale);
+            f.draw(canvas, label, r.centerX() - w / 2,
+                    r.centerY() - GbaFont.LINE_HEIGHT * textScale / 2, textScale, TEXT_DARK, TEXT_SHADOW);
+        }
+    }
+
+    private void drawHeader(Canvas canvas, String title, float scale) {
+        RectF bar = new RectF(0, 0, getWidth(), GbaFont.LINE_HEIGHT * scale * 1.6f);
+        paint.setColor(HEADER_GREEN);
+        canvas.drawRect(bar, paint);
+        paint.setColor(HEADER_GREEN_DARK);
+        canvas.drawRect(new RectF(bar.left, bar.bottom - 4, bar.right, bar.bottom), paint);
+        GbaFont f = font();
+        if (f != null) {
+            f.draw(canvas, title, scale * 8,
+                    bar.centerY() - GbaFont.LINE_HEIGHT * scale / 2, scale, TEXT_WHITE, TEXT_GREEN_SHADOW);
         }
     }
 
     private void drawTabBar(Canvas canvas) {
+        float scale = tabBarHeight() / (GbaFont.LINE_HEIGHT * 2.4f);
+        paint.setColor(HEADER_GREEN);
+        canvas.drawRect(new RectF(0, getHeight() - tabBarHeight(), getWidth(), getHeight()), paint);
         for (int i = 0; i < TAB_NAMES.length; i++) {
             RectF r = tabRect(i);
-            paint.setColor(i == tab ? ACCENT : PANEL);
-            canvas.drawRect(r, paint);
-            textPaint.setColor(i == tab ? BG : TEXT_DIM);
-            textPaint.setTextSize(r.height() * 0.38f);
-            textPaint.setTextAlign(Paint.Align.CENTER);
-            canvas.drawText(TAB_NAMES[i], r.centerX(), r.centerY() + textPaint.getTextSize() * 0.35f, textPaint);
+            r.inset(6, 7);
+            drawBar(canvas, r, i == tab, TAB_NAMES[i], scale);
         }
-        textPaint.setTextAlign(Paint.Align.LEFT);
-        textPaint.setColor(TEXT_MAIN);
     }
 
     private void drawCenteredMessage(Canvas canvas, String message) {
-        textPaint.setColor(TEXT_DIM);
-        textPaint.setTextSize(getHeight() * 0.04f);
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        canvas.drawText(message, getWidth() / 2f, (getHeight() - tabBarHeight()) / 2f, textPaint);
-        textPaint.setTextAlign(Paint.Align.LEFT);
-        textPaint.setColor(TEXT_MAIN);
-    }
-
-    private void drawPlaceholder(Canvas canvas, String message) {
-        drawCenteredMessage(canvas, message);
-    }
-
-    private String statusLabel(long status) {
-        if ((status & 0x7) != 0) return "SLP";
-        if ((status & 0x8) != 0 || (status & 0x80) != 0) return "PSN";
-        if ((status & 0x10) != 0) return "BRN";
-        if ((status & 0x20) != 0) return "FRZ";
-        if ((status & 0x40) != 0) return "PAR";
-        return null;
+        GbaFont f = font();
+        if (f == null) {
+            return;
+        }
+        float scale = getWidth() / 420f;
+        float w = f.measure(message, scale);
+        f.draw(canvas, message, (getWidth() - w) / 2,
+                (getHeight() - tabBarHeight()) / 2 - GbaFont.LINE_HEIGHT * scale / 2,
+                scale, TEXT_DARK, TEXT_SHADOW);
     }
 
     private int hpColor(int hp, int maxHp) {
-        if (maxHp <= 0) return TEXT_DIM;
+        if (maxHp <= 0) return HP_GREEN;
         float ratio = hp / (float) maxHp;
-        if (ratio > 0.5f) return 0xFF58D080;
-        if (ratio > 0.2f) return 0xFFF8B050;
-        return 0xFFF05868;
+        if (ratio > 0.5f) return HP_GREEN;
+        if (ratio > 0.2f) return HP_YELLOW;
+        return HP_RED;
     }
 
     private void drawHpBar(Canvas canvas, float left, float top, float width, float height, int hp, int maxHp) {
-        paint.setColor(0xFF0A1810);
+        paint.setColor(PANEL_BORDER);
+        canvas.drawRoundRect(new RectF(left - 2, top - 2, left + width + 2, top + height + 2), height / 2, height / 2, paint);
+        paint.setColor(PANEL_WHITE);
         canvas.drawRoundRect(new RectF(left, top, left + width, top + height), height / 2, height / 2, paint);
         if (maxHp > 0 && hp > 0) {
             float fill = Math.max(height, width * hp / (float) maxHp);
@@ -175,175 +234,361 @@ public final class DualScreenView extends View {
 
     private void drawTypeBadge(Canvas canvas, int type, float left, float top, float height) {
         if (type < 0 || type >= TYPE_NAMES.length) return;
-        float width = height * 3.2f;
-        paint.setColor(TYPE_COLORS[Math.min(type, TYPE_COLORS.length - 1)]);
+        GbaFont f = font();
+        float scale = height / (GbaFont.LINE_HEIGHT * 1.3f);
+        float width = height * 3.1f;
         RectF r = new RectF(left, top, left + width, top + height);
-        canvas.drawRoundRect(r, height * 0.2f, height * 0.2f, paint);
-        textPaint.setColor(Color.WHITE);
-        textPaint.setTextSize(height * 0.62f);
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        canvas.drawText(TYPE_NAMES[type], r.centerX(), r.centerY() + textPaint.getTextSize() * 0.35f, textPaint);
-        textPaint.setTextAlign(Paint.Align.LEFT);
-        textPaint.setColor(TEXT_MAIN);
+        paint.setColor(0x40000000);
+        canvas.drawRoundRect(new RectF(r.left, r.top + 2, r.right, r.bottom + 2), 5, 5, paint);
+        paint.setColor(TYPE_COLORS[Math.min(type, TYPE_COLORS.length - 1)]);
+        canvas.drawRoundRect(r, 5, 5, paint);
+        if (f != null) {
+            String name = TYPE_NAMES[type];
+            float w = f.measure(name, scale);
+            f.draw(canvas, name, r.centerX() - w / 2,
+                    r.centerY() - GbaFont.LINE_HEIGHT * scale / 2, scale, TEXT_WHITE, 0xFF585858);
+        }
+    }
+
+    private String statusLabel(long status, int hp) {
+        if (hp == 0) return "FNT";
+        if ((status & 0x7) != 0) return "SLP";
+        if ((status & 0x8) != 0 || (status & 0x80) != 0) return "PSN";
+        if ((status & 0x10) != 0) return "BRN";
+        if ((status & 0x20) != 0) return "FRZ";
+        if ((status & 0x40) != 0) return "PAR";
+        return null;
+    }
+
+    // ------------------------------------------------------------------
+    // Tabs
+    // ------------------------------------------------------------------
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+        drawBackground(canvas);
+        if (!state.inGame) {
+            drawCenteredMessage(canvas, "Waiting for the adventure to start~");
+            drawTabBar(canvas);
+            return;
+        }
+        switch (tab) {
+        case TAB_PARTY:  drawParty(canvas); break;
+        case TAB_BATTLE: drawBattle(canvas); break;
+        case TAB_MAP:    drawMap(canvas); break;
+        case TAB_BAG:    drawBag(canvas); break;
+        case TAB_CARD:   drawTrainerCard(canvas); break;
+        }
+        drawTabBar(canvas);
     }
 
     private void drawParty(Canvas canvas) {
+        GbaFont f = font();
         float contentHeight = getHeight() - tabBarHeight();
-        float pad = getWidth() * 0.015f;
+        float pad = getWidth() * 0.012f;
         float rowH = (contentHeight - pad * 4) / 3;
         float colW = (getWidth() - pad * 3) / 2;
+        float scale = rowH / (GbaFont.LINE_HEIGHT * 4.6f);
+
         for (int i = 0; i < 6; i++) {
             float left = pad + (i % 2) * (colW + pad);
             float top = pad + (i / 2) * (rowH + pad);
             RectF card = new RectF(left, top, left + colW, top + rowH);
-            paint.setColor(i < state.party.size() ? PANEL : 0xFF14301F);
-            canvas.drawRoundRect(card, pad, pad, paint);
+            paint.setColor(i < state.party.size() ? PANEL_WHITE : 0x66FFFFFF);
+            canvas.drawRoundRect(card, 10, 10, paint);
+            paint.setColor(i < state.party.size() ? BAR_BORDER : 0x66A88848);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(3);
+            canvas.drawRoundRect(card, 10, 10, paint);
+            paint.setStyle(Paint.Style.FILL);
             if (i >= state.party.size()) continue;
             DualScreenState.Mon mon = state.party.get(i);
 
-            float inset = rowH * 0.14f;
-            float iconSize = rowH * 0.55f;
+            float inset = rowH * 0.12f;
+            float iconSize = rowH * 0.52f;
             Bitmap icon = mon.isEgg ? null : monIcon(mon.species);
             if (icon != null) {
-                paint.setFilterBitmap(false);
                 canvas.drawBitmap(icon, null,
                         new RectF(card.left + inset, card.top + inset,
-                                  card.left + inset + iconSize, card.top + inset + iconSize), paint);
+                                  card.left + inset + iconSize, card.top + inset + iconSize), pixelPaint);
             }
             float textLeft = card.left + inset + iconSize + inset;
+            if (f == null) continue;
 
-            textPaint.setTextSize(rowH * 0.20f);
             String title = mon.isEgg ? "EGG" : mon.nick;
-            canvas.drawText(title, textLeft, card.top + inset + rowH * 0.18f, textPaint);
+            f.draw(canvas, title, textLeft, card.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
 
             if (!mon.isEgg) {
-                textPaint.setColor(TEXT_DIM);
-                textPaint.setTextSize(rowH * 0.15f);
-                String sub = mon.name + "  Lv" + mon.level
-                        + (mon.gender == 0 ? " ♂" : mon.gender == 1 ? " ♀" : "");
-                canvas.drawText(sub, textLeft, card.top + inset + rowH * 0.38f, textPaint);
-                textPaint.setColor(TEXT_MAIN);
+                String sub = "Lv" + mon.level + (mon.gender == 0 ? " ♂" : mon.gender == 1 ? " ♀" : "");
+                float subScale = scale * 0.85f;
+                f.draw(canvas, sub, textLeft, card.top + inset + GbaFont.LINE_HEIGHT * scale + 4,
+                        subScale, TEXT_DARK, TEXT_SHADOW);
 
-                float barTop = card.top + inset + rowH * 0.46f;
-                drawHpBar(canvas, textLeft, barTop, card.right - inset - textLeft, rowH * 0.09f, mon.hp, mon.maxHp);
-                textPaint.setTextSize(rowH * 0.15f);
-                String hpText = mon.hp + " / " + mon.maxHp;
-                String status = statusLabel(mon.status);
-                if (mon.hp == 0) status = "FNT";
-                canvas.drawText(hpText, textLeft, barTop + rowH * 0.25f, textPaint);
+                float barTop = card.top + inset + GbaFont.LINE_HEIGHT * scale * 1.95f;
+                float barH = rowH * 0.075f;
+                drawHpBar(canvas, textLeft, barTop, card.right - inset - textLeft, barH, mon.hp, mon.maxHp);
+
+                String hpText = mon.hp + "/" + mon.maxHp;
+                f.draw(canvas, hpText, textLeft, barTop + barH + 6, subScale, TEXT_DARK, TEXT_SHADOW);
+                String status = statusLabel(mon.status, mon.hp);
                 if (status != null) {
-                    textPaint.setColor(0xFFF05868);
-                    textPaint.setTextAlign(Paint.Align.RIGHT);
-                    canvas.drawText(status, card.right - inset, barTop + rowH * 0.25f, textPaint);
-                    textPaint.setTextAlign(Paint.Align.LEFT);
-                    textPaint.setColor(TEXT_MAIN);
+                    float w = f.measure(status, subScale);
+                    f.draw(canvas, status, card.right - inset - w, barTop + barH + 6,
+                            subScale, HP_RED, TEXT_SHADOW);
                 }
-                float badgeTop = card.bottom - inset - rowH * 0.16f;
-                drawTypeBadge(canvas, mon.types[0], card.left + inset, badgeTop, rowH * 0.16f);
+
+                float badgeH = rowH * 0.155f;
+                float badgeTop = card.bottom - inset - badgeH;
+                drawTypeBadge(canvas, mon.types[0], card.left + inset, badgeTop, badgeH);
                 if (mon.types[1] != mon.types[0]) {
-                    drawTypeBadge(canvas, mon.types[1], card.left + inset + rowH * 0.16f * 3.2f + inset / 2, badgeTop, rowH * 0.16f);
-                }
-                if (mon.itemName != null && !mon.itemName.isEmpty()) {
-                    textPaint.setColor(TEXT_DIM);
-                    textPaint.setTextSize(rowH * 0.13f);
-                    textPaint.setTextAlign(Paint.Align.RIGHT);
-                    canvas.drawText(mon.itemName, card.right - inset, badgeTop + rowH * 0.13f, textPaint);
-                    textPaint.setTextAlign(Paint.Align.LEFT);
-                    textPaint.setColor(TEXT_MAIN);
+                    drawTypeBadge(canvas, mon.types[1], card.left + inset + badgeH * 3.1f + 8, badgeTop, badgeH);
                 }
             }
         }
     }
 
     private void drawBattle(Canvas canvas) {
-        if (!state.inBattle || state.battlePlayerMon == null) {
+        GbaFont f = font();
+        if (!state.inBattle || state.battlePlayerMon == null || f == null) {
             drawCenteredMessage(canvas, "Not in battle");
             return;
         }
         float contentHeight = getHeight() - tabBarHeight();
         float pad = getWidth() * 0.02f;
+        float scale = getWidth() / 430f;
 
         DualScreenState.Mon enemy = state.battleEnemyMon;
         if (enemy != null) {
-            RectF top = new RectF(pad, pad, getWidth() - pad, contentHeight * 0.28f);
-            paint.setColor(PANEL);
-            canvas.drawRoundRect(top, pad, pad, paint);
+            RectF top = new RectF(pad, pad, getWidth() - pad, contentHeight * 0.27f);
+            paint.setColor(PANEL_WHITE);
+            canvas.drawRoundRect(top, 10, 10, paint);
+            paint.setColor(BAR_BORDER);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(3);
+            canvas.drawRoundRect(top, 10, 10, paint);
+            paint.setStyle(Paint.Style.FILL);
+
+            float inset = top.height() * 0.14f;
+            float iconSize = top.height() * 0.68f;
             Bitmap icon = monIcon(enemy.species);
-            float inset = top.height() * 0.15f;
-            float iconSize = top.height() * 0.7f;
             if (icon != null) {
-                paint.setFilterBitmap(false);
                 canvas.drawBitmap(icon, null,
                         new RectF(top.left + inset, top.top + inset,
-                                  top.left + inset + iconSize, top.top + inset + iconSize), paint);
+                                  top.left + inset + iconSize, top.top + inset + iconSize), pixelPaint);
             }
             float textLeft = top.left + inset + iconSize + inset;
-            textPaint.setTextSize(top.height() * 0.24f);
-            canvas.drawText((state.battleKind == 1 ? "FOE " : "WILD ") + enemy.name + "  Lv" + enemy.level,
-                    textLeft, top.top + top.height() * 0.35f, textPaint);
-            drawHpBar(canvas, textLeft, top.top + top.height() * 0.5f,
-                    top.right - inset - textLeft, top.height() * 0.12f, enemy.hp, enemy.maxHp);
-            textPaint.setTextSize(top.height() * 0.2f);
-            textPaint.setColor(TEXT_DIM);
-            canvas.drawText(enemy.hp + " / " + enemy.maxHp, textLeft, top.top + top.height() * 0.85f, textPaint);
-            textPaint.setColor(TEXT_MAIN);
-            drawTypeBadge(canvas, enemy.types[0], top.right - inset - top.height() * 0.2f * 3.2f, top.top + inset, top.height() * 0.2f);
+            String header = (state.battleKind == 1 ? "FOE " : "WILD ") + enemy.name + "  Lv" + enemy.level;
+            f.draw(canvas, header, textLeft, top.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
+            float barTop = top.top + inset + GbaFont.LINE_HEIGHT * scale + 10;
+            drawHpBar(canvas, textLeft, barTop, top.right - inset - textLeft - top.height() * 0.9f,
+                    top.height() * 0.1f, enemy.hp, enemy.maxHp);
+            f.draw(canvas, enemy.hp + "/" + enemy.maxHp, textLeft,
+                    barTop + top.height() * 0.1f + 8, scale * 0.85f, TEXT_DARK, TEXT_SHADOW);
+            drawTypeBadge(canvas, enemy.types[0], top.right - inset - top.height() * 0.26f * 3.1f,
+                    top.top + inset, top.height() * 0.26f);
         }
 
         DualScreenState.Mon self = state.battlePlayerMon;
-        float movesTop = contentHeight * 0.32f;
-        RectF header = new RectF(pad, movesTop, getWidth() - pad, movesTop + contentHeight * 0.12f);
-        textPaint.setTextSize(header.height() * 0.5f);
-        canvas.drawText(self.nick + "  Lv" + self.level + "   " + self.hp + "/" + self.maxHp + " HP",
-                header.left + pad, header.centerY() + textPaint.getTextSize() * 0.35f, textPaint);
+        float headerTop = contentHeight * 0.30f;
+        f.draw(canvas, self.nick + "  Lv" + self.level + "  " + self.hp + "/" + self.maxHp + " HP",
+                pad * 1.5f, headerTop, scale, TEXT_DARK, TEXT_SHADOW);
 
-        float gridTop = header.bottom + pad;
+        float gridTop = headerTop + GbaFont.LINE_HEIGHT * scale + pad;
         float cellH = (contentHeight - gridTop - pad * 2) / 2;
         float cellW = (getWidth() - pad * 3) / 2;
         for (int i = 0; i < 4; i++) {
             float left = pad + (i % 2) * (cellW + pad);
             float top = gridTop + (i / 2) * (cellH + pad);
             RectF cell = new RectF(left, top, left + cellW, top + cellH);
-            paint.setColor(i < self.moves.size() ? PANEL_LIGHT : 0xFF14301F);
-            canvas.drawRoundRect(cell, pad, pad, paint);
-            if (i >= self.moves.size()) continue;
-            DualScreenState.Move move = self.moves.get(i);
-            float inset = cellH * 0.16f;
-            textPaint.setTextSize(cellH * 0.24f);
-            canvas.drawText(move.name, cell.left + inset, cell.top + inset + cellH * 0.2f, textPaint);
-            drawTypeBadge(canvas, move.type, cell.left + inset, cell.top + cellH * 0.5f, cellH * 0.2f);
-            textPaint.setColor(move.pp == 0 ? 0xFFF05868 : TEXT_DIM);
-            textPaint.setTextSize(cellH * 0.2f);
-            textPaint.setTextAlign(Paint.Align.RIGHT);
-            canvas.drawText("PP " + move.pp + "/" + move.maxPp, cell.right - inset, cell.bottom - inset, textPaint);
-            textPaint.setTextAlign(Paint.Align.LEFT);
-            textPaint.setColor(TEXT_MAIN);
+            if (i < self.moves.size()) {
+                drawBar(canvas, cell, false, null, scale);
+                DualScreenState.Move move = self.moves.get(i);
+                float inset = cellH * 0.16f;
+                f.draw(canvas, move.name, cell.left + inset, cell.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
+                drawTypeBadge(canvas, move.type, cell.left + inset,
+                        cell.bottom - inset - cellH * 0.24f, cellH * 0.24f);
+                String pp = "PP " + move.pp + "/" + move.maxPp;
+                float w = f.measure(pp, scale * 0.9f);
+                f.draw(canvas, pp, cell.right - inset - w,
+                        cell.bottom - inset - GbaFont.LINE_HEIGHT * scale * 0.9f,
+                        scale * 0.9f, move.pp == 0 ? HP_RED : TEXT_DARK, TEXT_SHADOW);
+            } else {
+                paint.setColor(0x44A88848);
+                canvas.drawRoundRect(cell, 8, 8, paint);
+            }
+        }
+    }
+
+    private void ensureMapData() {
+        if (mapEntries == null) {
+            mapEntries = new java.util.ArrayList<>();
+            try {
+                org.json.JSONArray entries = new org.json.JSONArray(DualScreenBridge.nativeGetRegionMapJson());
+                for (int i = 0; i < entries.length(); i++) {
+                    org.json.JSONObject o = entries.getJSONObject(i);
+                    MapEntry e = new MapEntry();
+                    e.id = o.optInt("id");
+                    e.x = o.optInt("x");
+                    e.y = o.optInt("y");
+                    e.w = Math.max(o.optInt("w"), 1);
+                    e.h = Math.max(o.optInt("h"), 1);
+                    e.name = o.optString("n");
+                    mapEntries.add(e);
+                }
+            } catch (org.json.JSONException ignored) {
+            }
+        }
+        if (regionMap == null) {
+            int[] pixels = DualScreenBridge.nativeGetRegionMapImage();
+            if (pixels != null && pixels.length == 240 * 160) {
+                regionMap = Bitmap.createBitmap(pixels, 240, 160, Bitmap.Config.ARGB_8888);
+            }
+        }
+    }
+
+    private void drawMap(Canvas canvas) {
+        ensureMapData();
+        GbaFont f = font();
+        float contentHeight = getHeight() - tabBarHeight();
+
+        if (regionMap == null) {
+            drawCenteredMessage(canvas, "Map unavailable");
+            return;
+        }
+
+        // Integer-scale the 240x160 map, centered.
+        int scale = (int) Math.min(getWidth() / 240f, contentHeight / 160f);
+        if (scale < 1) scale = 1;
+        float mapW = 240 * scale;
+        float mapH = 160 * scale;
+        float originX = (getWidth() - mapW) / 2f;
+        float originY = (contentHeight - mapH) / 2f;
+
+        paint.setColor(SEA_BLUE);
+        canvas.drawRect(new RectF(0, 0, getWidth(), contentHeight), paint);
+        canvas.drawBitmap(regionMap, null, new RectF(originX, originY, originX + mapW, originY + mapH), pixelPaint);
+
+        // Player marker: grid starts at tile (1, 2); blink like the game.
+        if (state.mapsec >= 0) {
+            for (MapEntry e : mapEntries) {
+                if (e.id != state.mapsec) continue;
+                boolean blink = (System.currentTimeMillis() / 400) % 2 == 0;
+                float cx = originX + ((e.x + 1) * 8 + e.w * 4) * scale;
+                float cy = originY + ((e.y + 2) * 8 + e.h * 4) * scale;
+                paint.setColor(blink ? 0xFFF83030 : 0xFFF8A0A0);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(3f * scale / 2);
+                RectF marker = new RectF(
+                        originX + (e.x + 1) * 8 * scale, originY + (e.y + 2) * 8 * scale,
+                        originX + ((e.x + 1) * 8 + e.w * 8) * scale, originY + ((e.y + 2) * 8 + e.h * 8) * scale);
+                canvas.drawRect(marker, paint);
+                paint.setStyle(Paint.Style.FILL);
+                canvas.drawCircle(cx, cy, 3f * scale / 2, paint);
+                break;
+            }
+        }
+
+        // Location label box, like the in-game map.
+        if (f != null && !state.mapName.isEmpty()) {
+            float labelScale = scale * 0.9f;
+            float textW = f.measure(state.mapName, labelScale);
+            RectF box = new RectF(originX + 8 * scale,
+                    originY + mapH - GbaFont.LINE_HEIGHT * labelScale - 18 * scale / 2f,
+                    originX + 8 * scale + textW + 24,
+                    originY + mapH - 4 * scale / 2f);
+            paint.setColor(PANEL_WHITE);
+            canvas.drawRoundRect(box, 6, 6, paint);
+            paint.setColor(PANEL_BORDER);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(3);
+            canvas.drawRoundRect(box, 6, 6, paint);
+            paint.setStyle(Paint.Style.FILL);
+            f.draw(canvas, state.mapName, box.left + 12,
+                    box.centerY() - GbaFont.LINE_HEIGHT * labelScale / 2, labelScale, TEXT_DARK, TEXT_SHADOW);
+        }
+    }
+
+    private void drawBag(Canvas canvas) {
+        GbaFont f = font();
+        float contentHeight = getHeight() - tabBarHeight();
+        float pad = getWidth() * 0.02f;
+        float scale = getWidth() / 460f;
+
+        for (int i = 0; i < POCKET_NAMES.length; i++) {
+            RectF r = pocketRect(i);
+            r.inset(5, 5);
+            drawBar(canvas, r, i == bagPocket, POCKET_NAMES[i], scale * 0.85f);
+        }
+
+        if (f == null || bagPocket >= state.bag.size() || state.bag.get(bagPocket).isEmpty()) {
+            drawCenteredMessage(canvas, "Empty pocket");
+            return;
+        }
+        java.util.List<DualScreenState.BagItem> items = state.bag.get(bagPocket);
+        float listTop = contentHeight * 0.13f;
+        int rows = 11;
+        float rowH = (contentHeight - listTop - pad) / rows;
+        int columns = 2;
+        float colW = (getWidth() - pad * (columns + 1)) / columns;
+        int visible = Math.min(items.size(), rows * columns);
+        for (int i = 0; i < visible; i++) {
+            int col = i / rows;
+            int row = i % rows;
+            float left = pad + col * (colW + pad);
+            float top = listTop + row * rowH;
+            DualScreenState.BagItem item = items.get(i);
+            f.draw(canvas, item.name, left, top + (rowH - GbaFont.LINE_HEIGHT * scale) / 2,
+                    scale, TEXT_DARK, TEXT_SHADOW);
+            String qty = "x" + item.quantity;
+            float w = f.measure(qty, scale);
+            f.draw(canvas, qty, left + colW - w, top + (rowH - GbaFont.LINE_HEIGHT * scale) / 2,
+                    scale, TEXT_DARK, TEXT_SHADOW);
+        }
+        if (items.size() > visible && f != null) {
+            f.draw(canvas, "+" + (items.size() - visible) + " more~", pad,
+                    contentHeight - GbaFont.LINE_HEIGHT * scale - 4, scale * 0.85f, TEXT_DARK, TEXT_SHADOW);
         }
     }
 
     private void drawTrainerCard(Canvas canvas) {
+        GbaFont f = font();
+        if (f == null) {
+            return;
+        }
         float contentHeight = getHeight() - tabBarHeight();
-        float pad = getWidth() * 0.03f;
-        RectF card = new RectF(pad * 2, pad * 2, getWidth() - pad * 2, contentHeight - pad * 2);
-        paint.setColor(PANEL);
-        canvas.drawRoundRect(card, pad, pad, paint);
+        float pad = getWidth() * 0.05f;
+        float scale = getWidth() / 400f;
+        RectF card = new RectF(pad, pad, getWidth() - pad, contentHeight - pad);
 
-        float inset = pad * 1.5f;
-        textPaint.setTextSize(card.height() * 0.11f);
-        canvas.drawText(state.playerName, card.left + inset, card.top + inset + card.height() * 0.1f, textPaint);
+        paint.setColor(0xFF48A868);
+        canvas.drawRoundRect(card, 18, 18, paint);
+        paint.setColor(0xFF389858);
+        canvas.drawRect(new RectF(card.left, card.top + card.height() * 0.28f,
+                card.right, card.top + card.height() * 0.30f), paint);
+        paint.setColor(0xFFF8F8F8);
+        RectF inner = new RectF(card.left + card.width() * 0.06f, card.top + card.height() * 0.36f,
+                card.right - card.width() * 0.06f, card.bottom - card.height() * 0.08f);
+        canvas.drawRoundRect(inner, 10, 10, paint);
 
-        textPaint.setTextSize(card.height() * 0.07f);
-        textPaint.setColor(TEXT_DIM);
-        float line = card.top + inset + card.height() * 0.28f;
-        canvas.drawText("MONEY", card.left + inset, line, textPaint);
-        canvas.drawText("PLAY TIME", card.left + inset, line + card.height() * 0.16f, textPaint);
-        canvas.drawText("BADGES", card.left + inset, line + card.height() * 0.32f, textPaint);
-        canvas.drawText("LOCATION", card.left + inset, line + card.height() * 0.48f, textPaint);
-        textPaint.setColor(TEXT_MAIN);
-        float valueX = card.left + card.width() * 0.38f;
-        canvas.drawText("$" + state.money, valueX, line, textPaint);
-        canvas.drawText(state.hours + "h " + String.format("%02dm", state.minutes), valueX, line + card.height() * 0.16f, textPaint);
-        canvas.drawText(Integer.toString(state.badges), valueX, line + card.height() * 0.32f, textPaint);
-        canvas.drawText(state.mapName, valueX, line + card.height() * 0.48f, textPaint);
+        f.draw(canvas, "TRAINER CARD", card.left + card.width() * 0.06f,
+                card.top + card.height() * 0.07f, scale * 0.9f, TEXT_WHITE, TEXT_GREEN_SHADOW);
+        f.draw(canvas, state.playerName, card.left + card.width() * 0.06f,
+                card.top + card.height() * 0.16f, scale * 1.15f, TEXT_WHITE, TEXT_GREEN_SHADOW);
+
+        float lineX = inner.left + inner.width() * 0.06f;
+        float valueX = inner.left + inner.width() * 0.52f;
+        float lineY = inner.top + inner.height() * 0.10f;
+        float lineStep = inner.height() * 0.21f;
+        String[][] rowsData = {
+            {"MONEY", "$" + state.money},
+            {"TIME", state.hours + ":" + String.format("%02d", state.minutes)},
+            {"BADGES", Integer.toString(state.badges)},
+            {"PLACE", state.mapName},
+        };
+        for (int i = 0; i < rowsData.length; i++) {
+            f.draw(canvas, rowsData[i][0], lineX, lineY + i * lineStep, scale, TEXT_DARK, TEXT_SHADOW);
+            f.draw(canvas, rowsData[i][1], valueX, lineY + i * lineStep, scale, TEXT_DARK, TEXT_SHADOW);
+        }
     }
 }
