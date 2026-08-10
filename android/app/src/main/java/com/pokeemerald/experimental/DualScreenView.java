@@ -432,11 +432,16 @@ public final class DualScreenView extends View {
                 + (mon.gender == 0 ? " ♂" : mon.gender == 1 ? " ♀" : "");
         f.draw(canvas, header, textLeft, rect.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
 
-        float badgeH = rect.height() * 0.24f;
-        drawTypeBadge(canvas, mon.types[0], rect.right - inset - badgeH * 3.1f, rect.top + inset, badgeH);
+        float badgeH = rect.height() * 0.18f;
+        drawTypeBadge(canvas, mon.types[0], rect.right - inset - badgeH * 3.1f,
+                rect.bottom - inset - badgeH, badgeH);
+        if (mon.types[1] != mon.types[0]) {
+            drawTypeBadge(canvas, mon.types[1], rect.right - inset - badgeH * 3.1f * 2 - 8,
+                    rect.bottom - inset - badgeH, badgeH);
+        }
 
         float barTop = rect.top + inset + GbaFont.LINE_HEIGHT * scale + 10;
-        drawHpBar(canvas, textLeft, barTop, rect.right - inset - textLeft - badgeH * 3.4f,
+        drawHpBar(canvas, textLeft, barTop, rect.right - inset - textLeft,
                 rect.height() * 0.1f, mon.hp, mon.maxHp);
         f.draw(canvas, mon.hp + "/" + mon.maxHp, textLeft,
                 barTop + rect.height() * 0.1f + 8, scale * 0.85f, TEXT_DARK, TEXT_SHADOW);
