@@ -6,6 +6,7 @@
 #include <stdbool.h>
 
 extern bool8 gModsEnabled;
+extern char *gActiveModSelector;
 
 void ModManager_Init(void);
 void ModManager_Shutdown(void);

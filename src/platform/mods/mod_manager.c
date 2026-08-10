@@ -45,6 +45,7 @@ static void InitRAMShadows(void) {
 #ifdef NATIVE_LINUX
 
 bool8 gModsEnabled = FALSE;
+char *gActiveModSelector = NULL;
 
 #define MAX_LOADED_MODS 32
 
@@ -286,11 +287,13 @@ void ModManager_Init(void) {
             cJSON *priority = cJSON_GetObjectItem(root, "priority");
 
             if (cJSON_IsString(id) && cJSON_IsString(version)) {
-                if (sNumLoadedMods < MAX_LOADED_MODS) {
-                    LoadedMod *mod = &sLoadedMods[sNumLoadedMods++];
-                    strncpy(mod->id, id->valuestring, sizeof(mod->id) - 1);
-                    mod->priority = cJSON_IsNumber(priority) ? priority->valueint : 0;
-                    snprintf(mod->path, sizeof(mod->path), "mods/%s", ent->d_name);
+                if (gActiveModSelector == NULL || strcmp(gActiveModSelector, id->valuestring) == 0) {
+                    if (sNumLoadedMods < MAX_LOADED_MODS) {
+                        LoadedMod *mod = &sLoadedMods[sNumLoadedMods++];
+                        strncpy(mod->id, id->valuestring, sizeof(mod->id) - 1);
+                        mod->priority = cJSON_IsNumber(priority) ? priority->valueint : 0;
+                        snprintf(mod->path, sizeof(mod->path), "mods/%s", ent->d_name);
+                    }
                 }
             }
             cJSON_Delete(root);

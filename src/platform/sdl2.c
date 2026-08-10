@@ -110,6 +110,11 @@ int main(int argc, char **argv)
             gVoxelModeEnabled = true;
         if (strcmp(argv[i], "--mods") == 0)
             gModsEnabled = true;
+        if (strcmp(argv[i], "--mod") == 0 && i + 1 < argc) {
+            gModsEnabled = true;
+            gActiveModSelector = argv[i+1];
+            i++;
+        }
     }
 #endif
 

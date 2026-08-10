@@ -37,6 +37,8 @@
 #include "title_screen.h"
 #include "window.h"
 #include "mystery_gift_menu.h"
+#include "new_game.h"
+#include "load_save.h"
 
 /*
  * Main menu state machine
@@ -1581,6 +1583,17 @@ static void Task_NewGameBirchSpeech_ChooseGender(u8 taskId)
                 if (gActiveModSelector != NULL && strcmp(gActiveModSelector, "modern_emerald") == 0) {
                     extern void CB2_NewGameBirchSpeech_ReturnFromTxRandomizerChallengesOptions(void);
                     extern void CB2_InitTxRandomizerChallengesMenu(void);
+                    // Point gSaveBlock1Ptr at the save block (offset 0, same pattern
+                    // as InitMainCallbacks uses for gSaveBlock2Ptr) so that
+                    // DrawChoices can call FlagSet/FlagClear without crashing.
+                    // Do NOT call SetSaveBlocksPointers() here — that moves
+                    // gSaveBlock2Ptr to a random offset and would corrupt the
+                    // playerGender we just wrote.  Full NewGameInitData() still
+                    // runs in CB2_NewGame after the player names themselves.
+                    if (gSaveBlock1Ptr == NULL) {
+                        gSaveBlock1Ptr = &gSaveblock1.block;
+                        InitEventData();
+                    }
                     gMain.savedCallback = CB2_NewGameBirchSpeech_ReturnFromTxRandomizerChallengesOptions;
                     SetMainCallback2(CB2_InitTxRandomizerChallengesMenu);
                     DestroyTask(taskId);
@@ -1599,6 +1612,10 @@ static void Task_NewGameBirchSpeech_ChooseGender(u8 taskId)
                 if (gActiveModSelector != NULL && strcmp(gActiveModSelector, "modern_emerald") == 0) {
                     extern void CB2_NewGameBirchSpeech_ReturnFromTxRandomizerChallengesOptions(void);
                     extern void CB2_InitTxRandomizerChallengesMenu(void);
+                    if (gSaveBlock1Ptr == NULL) {
+                        gSaveBlock1Ptr = &gSaveblock1.block;
+                        InitEventData();
+                    }
                     gMain.savedCallback = CB2_NewGameBirchSpeech_ReturnFromTxRandomizerChallengesOptions;
                     SetMainCallback2(CB2_InitTxRandomizerChallengesMenu);
                     DestroyTask(taskId);
