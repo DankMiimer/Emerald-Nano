@@ -18,9 +18,8 @@
 #ifdef NATIVE_LINUX
 #include <SDL2/SDL_image.h>
 #include "voxel/voxel_renderer.h"
-#include "mods/mod_manager.h"
 #endif
-
+#include "mods/mod_manager.h"
 #ifdef PLATFORM_SDL2
 #ifdef NATIVE_LINUX
 bool gVoxelModeEnabled = false;

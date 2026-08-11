@@ -1,8 +1,0 @@
-{
-  "format_version": 1,
-  "id": "importer_test",
-  "name": "Importer Test",
-  "version": "imported",
-  "priority": 100,
-  "generated_by": "pokeemerald-multiplatform romhack_importer"
-}

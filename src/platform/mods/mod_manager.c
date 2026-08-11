@@ -405,86 +405,11 @@ u8 ModManager_GetStarterLevel(u8 slot, u8 vanillaLevel) {
 
 #else
 bool8 gModsEnabled = FALSE;
+char *gActiveModSelector = NULL;
 
-static void LoadStarterOverrides(LoadedMod *mod) {
-    char path[512];
-    snprintf(path, sizeof(path), "%s/data/starters.json", mod->path);
-    char *jsonStr = ModManager_ReadFileToString(path);
-    if (!jsonStr) return;
-
-    cJSON *root = cJSON_Parse(jsonStr);
-    if (!root) {
-        fprintf(stderr, "[Mods][ERROR] Invalid JSON in %s\n", path);
-        free(jsonStr);
-        return;
-    }
-
-    cJSON *starters = cJSON_GetObjectItem(root, "starters");
-    if (cJSON_IsArray(starters)) {
-        cJSON *starter;
-        cJSON_ArrayForEach(starter, starters) {
-            cJSON *slotObj = cJSON_GetObjectItem(starter, "slot");
-            if (!cJSON_IsNumber(slotObj)) continue;
-            u8 slot = slotObj->valueint;
-
-            if (slot > 2) {
-                fprintf(stderr, "[Mods][ERROR] %s: starter slot %d is out of bounds\n", mod->id, slot);
-                continue;
-            }
-
-            // Check if already overridden (higher priority mod would have done it)
-            bool8 alreadyOverridden = FALSE;
-            for (int i = 0; i < sNumStarterOverrides; i++) {
-                if (sStarterOverrides[i].slot == slot) {
-                    alreadyOverridden = TRUE;
-                    break;
-                }
-            }
-            if (alreadyOverridden) continue;
-
-            cJSON *speciesObj = cJSON_GetObjectItem(starter, "species");
-            cJSON *lvlObj = cJSON_GetObjectItem(starter, "level");
-            
-            if (!cJSON_IsNumber(speciesObj)) {
-                fprintf(stderr, "[Mods][ERROR] %s: starter slot %d has invalid species\n", mod->id, slot);
-                fprintf(stderr, "[Mods] Falling back to vanilla starter for slot %d\n", slot);
-                continue;
-            }
-            
-            u16 species = speciesObj->valueint;
-            if (species > NUM_SPECIES) {
-                fprintf(stderr, "[Mods][ERROR] %s: starter slot %d has invalid species\n", mod->id, slot);
-                fprintf(stderr, "[Mods] Falling back to vanilla starter for slot %d\n", slot);
-                continue;
-            }
-            
-            u8 level = 5;
-            if (cJSON_IsNumber(lvlObj)) {
-                level = lvlObj->valueint;
-                if (level < 1 || level > 100) {
-                    fprintf(stderr, "[Mods][ERROR] %s: starter slot %d has invalid level %d\n", mod->id, slot, level);
-                    fprintf(stderr, "[Mods] Falling back to vanilla starter for slot %d\n", slot);
-                    continue; // OR we could just clamp the level, but prompt says "fall back to the vanilla value"
-                }
-            }
-
-            StarterOverride *ov = &sStarterOverrides[sNumStarterOverrides++];
-            ov->slot = slot;
-            ov->species = species;
-            ov->level = level;
-            
-            fprintf(stderr, "[Mods]   Loaded starter override slot %d -> species %d lvl %d from %s\n", slot, species, level, mod->id);
-        }
-    }
-
-    cJSON_Delete(root);
-    free(jsonStr);
-}
-
-void ModManager_Init(void) {
-}
+void ModManager_Init(void) {}
 void ModManager_Shutdown(void) {}
-bool8 ModManager_IsEnabled(void) { return FALSE; }
+char *ModManager_ReadFileToString(const char *path) { return NULL; }
 const struct Trainer *ModManager_GetTrainer(u16 trainerId) { return &gTrainers[trainerId]; }
 bool8 ModManager_GetTrainerFrontPicOverride(u16 trainerPicId, void *destBuffer) { return FALSE; }
 u16 ModManager_GetStarterSpecies(u8 slot, u16 vanillaSpecies) { return vanillaSpecies; }
