@@ -23,19 +23,20 @@ extern SDL_Window *sdlWindow;
 
 static GLuint sVoxelAtlasTex = 0;
 static const struct MapLayout *sLastMapLayout = NULL;
+bool gVoxelFirstPersonMode = false;
 
 // -----------------------------------------------------------------------
 //  Atlas builder
 // -----------------------------------------------------------------------
-static void BuildVoxelAtlas(void)
+static GLuint BuildVoxelAtlasForHeader(const struct MapHeader *header)
 {
-    if (!gMapHeader.mapLayout) return;
+    if (!header || !header->mapLayout) return 0;
 
     uint32_t *atlasPixels = malloc(512 * 512 * 4);
-    if (!atlasPixels) return;
+    if (!atlasPixels) return 0;
     memset(atlasPixels, 0, 512 * 512 * 4);
 
-    const struct MapLayout *layout = gMapHeader.mapLayout;
+    const struct MapLayout *layout = header->mapLayout;
 
     uint8_t *primTiles = calloc(1, 65536);
     uint8_t *secTiles  = calloc(1, 65536);
@@ -143,20 +144,18 @@ static void BuildVoxelAtlas(void)
     for (int i = 0; i < 512 * 512; i++)
         atlasPixels[i] |= (255u << 24);
 
-    if (sVoxelAtlasTex == 0)
-        glGenTextures(1, &sVoxelAtlasTex);
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
 
-    glBindTexture(GL_TEXTURE_2D, sVoxelAtlasTex);
+    glBindTexture(GL_TEXTURE_2D, tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 512, 512, 0, GL_RGBA, GL_UNSIGNED_BYTE, atlasPixels);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-    printf("[Voxel] atlas texture id: %u, GL error: %d\n", sVoxelAtlasTex, glGetError());
-
     free(primTiles);
     free(secTiles);
     free(atlasPixels);
-    sLastMapLayout = layout;
+    return tex;
 }
 
 // -----------------------------------------------------------------------
@@ -342,6 +341,11 @@ static u8 sLastMapGroup = 0xFF;
 static u8 sLastMapNum   = 0xFF;
 static bool sNeedCameraSnap = true;
 
+// -----------------------------------------------------------------------
+//  Camera
+// -----------------------------------------------------------------------
+static VoxelCamera sCamera;
+
 static bool DetectMapChange(void)
 {
     uint16_t currentLayoutId = gMapHeader.mapLayoutId;
@@ -352,6 +356,28 @@ static bool DetectMapChange(void)
         currentGroup != sLastMapGroup ||
         currentNum   != sLastMapNum)
     {
+        // Try to find the new map in the OLD instances to compute shift
+        bool found = false;
+        int shiftX = 0;
+        int shiftZ = 0;
+        for (int i = 0; i < gVoxelMapInstanceCount; i++) {
+            if (gVoxelMapInstances[i].mapGroup == currentGroup && gVoxelMapInstances[i].mapNum == currentNum) {
+                shiftX = -gVoxelMapInstances[i].originX;
+                shiftZ = -gVoxelMapInstances[i].originY;
+                found = true;
+                break;
+            }
+        }
+        
+        if (found) {
+            sCamera.x += shiftX;
+            sCamera.z += shiftZ;
+            sCamera.targetX += shiftX;
+            sCamera.targetZ += shiftZ;
+        } else {
+            sNeedCameraSnap = true;
+        }
+
         sLastMapLayoutId = currentLayoutId;
         sLastMapGroup    = currentGroup;
         sLastMapNum      = currentNum;
@@ -361,16 +387,18 @@ static bool DetectMapChange(void)
 }
 
 // -----------------------------------------------------------------------
-//  Camera
-// -----------------------------------------------------------------------
-static VoxelCamera sCamera;
-
-// -----------------------------------------------------------------------
 //  Main render function
 // -----------------------------------------------------------------------
 static bool sPrintedOnce = false;
 static bool gVoxelDebugFlatMode = false;
 static bool gF3WasPressed = false;
+
+void VoxelRenderer_HandleMouseMotion(int dx, int dy)
+{
+    if (gVoxelFirstPersonMode) {
+        VoxelCamera_FPSMouseMotion(&sCamera, dx, dy);
+    }
+}
 
 void VoxelRenderer_RenderFrame(void)
 {
@@ -461,13 +489,58 @@ void VoxelRenderer_RenderFrame(void)
     // ---- 3D OVERWORLD ----
     REG_VCOUNT = 161;
 
-    // Detect map change → rebuild atlas + snap camera
+    // Detect map change → snap camera
     bool mapChanged = DetectMapChange();
-    if (mapChanged || sLastMapLayout != gMapHeader.mapLayout) {
-        printf("[VoxelMap] Map changed! Rebuilding atlas...\n");
-        BuildVoxelAtlas();
+    if (mapChanged) {
         sNeedCameraSnap = true;
         sPrintedOnce = false;
+    }
+
+    VoxelWorld_BuildInstances();
+
+    static struct {
+        const struct MapLayout *layout;
+        GLuint tex;
+    } sAtlasCache[MAX_VOXEL_MAP_INSTANCES];
+    
+    // Check if cache needs reset (if main map layout changed, just clear all for safety)
+    static const struct MapLayout *sLastMainLayout = NULL;
+    if (sLastMainLayout != gMapHeader.mapLayout) {
+        for (int i = 0; i < MAX_VOXEL_MAP_INSTANCES; i++) {
+            if (sAtlasCache[i].tex) {
+                glDeleteTextures(1, &sAtlasCache[i].tex);
+                sAtlasCache[i].tex = 0;
+            }
+            sAtlasCache[i].layout = NULL;
+        }
+        sLastMainLayout = gMapHeader.mapLayout;
+    }
+
+    // Build/update atlas cache for current instances
+    GLuint instanceTextures[MAX_VOXEL_MAP_INSTANCES] = {0};
+    for (int i = 0; i < gVoxelMapInstanceCount; i++) {
+        const struct MapLayout *layout = gVoxelMapInstances[i].header->mapLayout;
+        GLuint tex = 0;
+        // Find in cache
+        for (int j = 0; j < MAX_VOXEL_MAP_INSTANCES; j++) {
+            if (sAtlasCache[j].layout == layout) {
+                tex = sAtlasCache[j].tex;
+                break;
+            }
+        }
+        // Build if not found
+        if (tex == 0) {
+            tex = BuildVoxelAtlasForHeader(gVoxelMapInstances[i].header);
+            // Store in first empty slot
+            for (int j = 0; j < MAX_VOXEL_MAP_INSTANCES; j++) {
+                if (sAtlasCache[j].layout == NULL) {
+                    sAtlasCache[j].layout = layout;
+                    sAtlasCache[j].tex = tex;
+                    break;
+                }
+            }
+        }
+        instanceTextures[i] = tex;
     }
 
     int mapW, mapH;
@@ -493,30 +566,38 @@ void VoxelRenderer_RenderFrame(void)
 
     // ---- Print map info once per map load ----
     if (!sPrintedOnce) {
-        int rawX = 0, rawY = 0;
-        if (gPlayerAvatar.objectEventId < 16) {
-            struct ObjectEvent *playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
-            rawX = playerObj->currentCoords.x;
-            rawY = playerObj->currentCoords.y;
+        printf("VOXEL MAP INSTANCES:\n");
+        for (int i = 0; i < gVoxelMapInstanceCount; i++) {
+            struct VoxelMapInstance *inst = &gVoxelMapInstances[i];
+            printf("%d:%d\norigin = (%d,%d)\nw=%d h=%d\n\n",
+                   inst->mapGroup, inst->mapNum, inst->originX, inst->originY,
+                   inst->header->mapLayout->width, inst->header->mapLayout->height);
         }
-        int localX = rawX - MAP_OFFSET;
-        int localZ = rawY - MAP_OFFSET;
-        printf("[VoxelMap] map=%d:%d layout=%d\n",
-               gSaveBlock1Ptr->location.mapGroup,
-               gSaveBlock1Ptr->location.mapNum,
-               gMapHeader.mapLayoutId);
-        printf("[VoxelMap] dimensions=%dx%d\n", mapW, mapH);
-        printf("[VoxelMap] player raw=%d,%d\n", rawX, rawY);
-        printf("[VoxelMap] player local=%d,%d\n", localX, localZ);
-        printf("[VoxelMap] camera=%.2f,%.2f\n", sCamera.targetX, sCamera.targetZ);
-        printf("[VoxelMap] MAP_OFFSET=%d\n", MAP_OFFSET);
+        printf("current map: %d:%d\n", gSaveBlock1Ptr->location.mapGroup, gSaveBlock1Ptr->location.mapNum);
+        printf("number of instances: %d\n", gVoxelMapInstanceCount);
+        printf("camera position: %.2f, %.2f, %.2f\n", sCamera.x, sCamera.y, sCamera.z);
+        
         sPrintedOnce = true;
     }
 
     // ---- We update object sprite textures below in the main drawing loop ----
 
     // ---- Camera smooth-follow ----
-    VoxelCamera_Update(&sCamera, billX, billZ);
+    if (gVoxelFirstPersonMode) {
+        const Uint8 *keys = SDL_GetKeyboardState(NULL);
+        float fwd = 0.0f, right = 0.0f, up = 0.0f;
+        if (keys[SDL_SCANCODE_W]) fwd = 1.0f;
+        if (keys[SDL_SCANCODE_S]) fwd = -1.0f;
+        if (keys[SDL_SCANCODE_D]) right = 1.0f;
+        if (keys[SDL_SCANCODE_A]) right = -1.0f;
+        if (keys[SDL_SCANCODE_SPACE]) up = 1.0f;
+        if (keys[SDL_SCANCODE_LSHIFT]) up = -1.0f;
+        
+        VoxelCamera_FPSTick(&sCamera, fwd, right, up);
+        VoxelCamera_Update(&sCamera, billX, billZ);
+    } else {
+        VoxelCamera_Update(&sCamera, billX, billZ);
+    }
 
     // ---- Viewport + clear ----
     int winW, winH;
@@ -535,62 +616,80 @@ void VoxelRenderer_RenderFrame(void)
     VoxelCamera_ApplyProjection(&sCamera, winW, winH);
     VoxelCamera_ApplyView(&sCamera);
 
+    extern void VoxelStructure_ExtractAll(void);
+    VoxelStructure_ExtractAll();
+
     // ---- Map geometry ----
     glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, sVoxelAtlasTex);
-    glColor3f(1.0f, 1.0f, 1.0f);
-
-    extern void VoxelMesh_BuildWalls(int mapW, int mapH);
+    extern void VoxelMesh_BuildWallsForInstance(int instIdx, GLuint tex);
     
     if (!gVoxelDebugFlatMode) {
-        VoxelMesh_BuildWalls(mapW, mapH);
+        for (int i = 0; i < gVoxelMapInstanceCount; i++) {
+            VoxelMesh_BuildWallsForInstance(i, instanceTextures[i]);
+        }
+        
+        extern void VoxelStructure_RenderAll(GLuint atlasTex);
+        if (gVoxelMapInstanceCount > 0) {
+            VoxelStructure_RenderAll(instanceTextures[0]);
+        }
     }
 
-    for (int y = 0; y < mapH; y++) {
-        for (int x = 0; x < mapW; x++) {
-            VoxelVisualShape terrain = VoxelWorld_ClassifyTile(x, y);
-            int metatileId = VoxelWorld_GetMetatileId(x, y);
-            if (gVoxelDebugFlatMode) {
-                // Draw entirely flat for debugging
-                float wx = (float)x;
-                float wz = (float)y;
-                float atlasW = 512.0f;
-                float atlasH = 512.0f;
-                float u0 = (metatileId % 32) * 16.0f / atlasW;
-                float v0 = (metatileId / 32) * 16.0f / atlasH;
-                float u1 = u0 + (16.0f / atlasW);
-                float v1 = v0 + (16.0f / atlasH);
+    for (int instIdx = 0; instIdx < gVoxelMapInstanceCount; instIdx++) {
+        const struct VoxelMapInstance *inst = &gVoxelMapInstances[instIdx];
+        glBindTexture(GL_TEXTURE_2D, instanceTextures[instIdx]);
+        
+        int w = inst->header->mapLayout->width;
+        int h = inst->header->mapLayout->height;
+        for (int ly = 0; ly < h; ly++) {
+            for (int lx = 0; lx < w; lx++) {
+                int x = lx + inst->originX;
+                int y = ly + inst->originY;
                 
-                glEnable(GL_TEXTURE_2D);
-                glColor3f(1.0f, 1.0f, 1.0f);
-                glBegin(GL_QUADS);
-                glTexCoord2f(u0, v0); glVertex3f(wx,      0.0f, wz);
-                glTexCoord2f(u1, v0); glVertex3f(wx+1.0f, 0.0f, wz);
-                glTexCoord2f(u1, v1); glVertex3f(wx+1.0f, 0.0f, wz+1.0f);
-                glTexCoord2f(u0, v1); glVertex3f(wx,      0.0f, wz+1.0f);
-                glEnd();
-                glDisable(GL_TEXTURE_2D);
+                VoxelVisualShape terrain = VoxelWorld_ClassifyTile(x, y);
+                int metatileId = VoxelWorld_GetMetatileId(x, y);
+                
+                if (gVoxelDebugFlatMode) {
+                    // Draw entirely flat for debugging
+                    float wx = (float)x;
+                    float wz = (float)y;
+                    float atlasW = 512.0f;
+                    float atlasH = 512.0f;
+                    float u0 = (metatileId % 32) * 16.0f / atlasW;
+                    float v0 = (metatileId / 32) * 16.0f / atlasH;
+                    float u1 = u0 + (16.0f / atlasW);
+                    float v1 = v0 + (16.0f / atlasH);
+                    
+                    glEnable(GL_TEXTURE_2D);
+                    glColor3f(1.0f, 1.0f, 1.0f);
+                    glBegin(GL_QUADS);
+                    glTexCoord2f(u0, v0); glVertex3f(wx,      0.0f, wz);
+                    glTexCoord2f(u1, v0); glVertex3f(wx+1.0f, 0.0f, wz);
+                    glTexCoord2f(u1, v1); glVertex3f(wx+1.0f, 0.0f, wz+1.0f);
+                    glTexCoord2f(u0, v1); glVertex3f(wx,      0.0f, wz+1.0f);
+                    glEnd();
+                    glDisable(GL_TEXTURE_2D);
 
-                // Highlight shapes with semi-transparent colors
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                glBegin(GL_QUADS);
-                if (terrain == VOXEL_SHAPE_WALL) glColor4f(1.0f, 0.0f, 0.0f, 0.5f);
-                else if (terrain == VOXEL_SHAPE_WALL_TOP) glColor4f(0.0f, 1.0f, 0.0f, 0.5f);
-                else if (terrain == VOXEL_SHAPE_VOID) glColor4f(0.0f, 0.0f, 0.0f, 0.8f);
-                else if (terrain == VOXEL_SHAPE_FLOOR) glColor4f(0.0f, 0.0f, 1.0f, 0.2f);
-                else glColor4f(1.0f, 1.0f, 0.0f, 0.3f); // Objects/Furniture
+                    // Highlight shapes with semi-transparent colors
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    glBegin(GL_QUADS);
+                    if (terrain == VOXEL_SHAPE_WALL) glColor4f(1.0f, 0.0f, 0.0f, 0.5f);
+                    else if (terrain == VOXEL_SHAPE_ROOF) glColor4f(0.0f, 1.0f, 0.0f, 0.5f);
+                    else if (terrain == VOXEL_SHAPE_LOW) glColor4f(1.0f, 1.0f, 0.0f, 0.5f);
+                    else if (terrain == VOXEL_SHAPE_FLAT) glColor4f(0.0f, 0.0f, 1.0f, 0.2f);
+                    else glColor4f(1.0f, 1.0f, 1.0f, 0.1f); // Objects/Furniture
 
-                glVertex3f(wx,      0.01f, wz);
-                glVertex3f(wx+1.0f, 0.01f, wz);
-                glVertex3f(wx+1.0f, 0.01f, wz+1.0f);
-                glVertex3f(wx,      0.01f, wz+1.0f);
-                glEnd();
-                glDisable(GL_BLEND);
-            } else {
-                extern bool *gVoxelWallConsumed;
-                if (!gVoxelWallConsumed || !gVoxelWallConsumed[y * 512 + x]) {
-                    VoxelMesh_DrawTile(x, y, terrain, metatileId);
+                    glVertex3f(wx,      0.01f, wz);
+                    glVertex3f(wx+1.0f, 0.01f, wz);
+                    glVertex3f(wx+1.0f, 0.01f, wz+1.0f);
+                    glVertex3f(wx,      0.01f, wz+1.0f);
+                    glEnd();
+                    glDisable(GL_BLEND);
+                } else {
+                    extern bool VoxelMesh_IsWallConsumed(int x, int y);
+                    if (!VoxelMesh_IsWallConsumed(x, y)) {
+                        VoxelMesh_DrawTile(x, y, terrain, metatileId);
+                    }
                 }
             }
         }

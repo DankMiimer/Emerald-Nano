@@ -1068,6 +1068,20 @@ void ProcessEvents(void)
                 break;
             }
             break;
+        case SDL_MOUSEMOTION:
+#ifdef NATIVE_LINUX
+            if (gVoxelModeEnabled) {
+                extern bool gVoxelFirstPersonMode;
+                if (gVoxelFirstPersonMode) {
+                    extern void VoxelCamera_FPSMouseMotion(void *cam, int dx, int dy);
+                    // We don't have direct access to sCamera here. Wait, VoxelCamera is in voxel_renderer.
+                    // We should add a function to voxel_renderer.c to handle it.
+                    extern void VoxelRenderer_HandleMouseMotion(int dx, int dy);
+                    VoxelRenderer_HandleMouseMotion(event.motion.xrel, event.motion.yrel);
+                }
+            }
+#endif
+            break;
         case SDL_KEYDOWN:
             switch (event.key.keysym.sym)
             {
@@ -1081,6 +1095,15 @@ void ProcessEvents(void)
             HANDLE_KEYDOWN(DPAD_DOWN)
             HANDLE_KEYDOWN(DPAD_LEFT)
             HANDLE_KEYDOWN(DPAD_RIGHT)
+#ifdef NATIVE_LINUX
+            case SDLK_F7:
+                if (gVoxelModeEnabled) {
+                    extern bool gVoxelFirstPersonMode;
+                    gVoxelFirstPersonMode = !gVoxelFirstPersonMode;
+                    SDL_SetRelativeMouseMode(gVoxelFirstPersonMode ? SDL_TRUE : SDL_FALSE);
+                }
+                break;
+#endif
             case SDLK_r:
                 if (event.key.keysym.mod & (KMOD_LCTRL | KMOD_RCTRL))
                 {

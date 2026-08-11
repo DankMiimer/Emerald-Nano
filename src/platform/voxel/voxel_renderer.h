@@ -18,6 +18,7 @@ void VoxelRenderer_Shutdown(void);
 
 // External flag set by main() from command-line args
 extern bool gVoxelModeEnabled;
+extern bool gVoxelFirstPersonMode;
 
 #endif // NATIVE_LINUX
 #endif // PLATFORM_SDL2

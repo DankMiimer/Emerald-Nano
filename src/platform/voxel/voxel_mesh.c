@@ -7,40 +7,72 @@
 #include <GL/gl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include "global.h"
+#include "fieldmap.h"
 
 bool *gVoxelWallConsumed = NULL;
 
-void VoxelMesh_BuildWalls(int mapW, int mapH)
+bool VoxelMesh_IsWallConsumed(int worldX, int worldY)
+{
+    // A simple coordinate hash map for consumed walls since the world coordinate space can be negative and large
+    if (!gVoxelWallConsumed) return false;
+    int hash = ((worldY + 4096) * 8192 + (worldX + 4096)) % (8192 * 8192); // naive hash mapped into a 1D array index (just an offset, assuming a bounded world area)
+    // Wait, the coordinates can be from -500 to +500. A 2048x2048 array centered at 1024,1024 is enough!
+    int cx = worldX + 1024;
+    int cy = worldY + 1024;
+    if (cx < 0 || cx >= 2048 || cy < 0 || cy >= 2048) return false;
+    return gVoxelWallConsumed[cy * 2048 + cx];
+}
+
+void VoxelMesh_SetWallConsumed(int worldX, int worldY, bool consumed)
+{
+    if (!gVoxelWallConsumed) return;
+    int cx = worldX + 1024;
+    int cy = worldY + 1024;
+    if (cx < 0 || cx >= 2048 || cy < 0 || cy >= 2048) return;
+    gVoxelWallConsumed[cy * 2048 + cx] = consumed;
+}
+
+void VoxelMesh_BuildWallsForInstance(int instIdx, GLuint tex)
 {
     if (gVoxelWallConsumed == NULL) {
-        gVoxelWallConsumed = calloc(512 * 512, sizeof(bool));
+        gVoxelWallConsumed = calloc(2048 * 2048, sizeof(bool));
     }
-    
-    if (gVoxelWallConsumed) {
-        for (int y = 0; y < mapH; y++) {
-            for (int x = 0; x < mapW; x++) {
-                gVoxelWallConsumed[y * 512 + x] = false;
-            }
-        }
+
+    if (instIdx == 0) {
+        // clear array once per frame on the first instance
+        memset(gVoxelWallConsumed, 0, 2048 * 2048 * sizeof(bool));
     }
+
+    const struct VoxelMapInstance *inst = &gVoxelMapInstances[instIdx];
+    int w = inst->header->mapLayout->width;
+    int h = inst->header->mapLayout->height;
 
     float atlasW = 512.0f;
     float atlasH = 512.0f;
 
-    for (int y = 0; y < mapH; y++) {
-        for (int x = 0; x < mapW; x++) {
-            if (gVoxelWallConsumed[y * 512 + x]) continue;
+    glBindTexture(GL_TEXTURE_2D, tex);
+
+    for (int ly = 0; ly < h; ly++) {
+        for (int lx = 0; lx < w; lx++) {
+            int x = lx + inst->originX;
+            int y = ly + inst->originY;
+            if (VoxelMesh_IsWallConsumed(x, y)) continue;
+
+            extern bool VoxelStructure_IsTileInStructure(int worldX, int worldY);
+            if (VoxelStructure_IsTileInStructure(x, y)) continue;
 
             VoxelVisualShape shape = VoxelWorld_ClassifyTile(x, y);
 
-            if (shape == VOXEL_SHAPE_WALL) {
+            if (shape == VOXEL_SHAPE_WALL || shape == VOXEL_SHAPE_BUILDING || shape == VOXEL_SHAPE_TREE) {
                 // Find height of this vertical structure
                 int heightInTiles = 1;
-                while (y - heightInTiles >= 0) {
+                while (true) {
                     VoxelVisualShape nShape = VoxelWorld_ClassifyTile(x, y - heightInTiles);
-                    if (nShape == VOXEL_SHAPE_WALL || nShape == VOXEL_SHAPE_WALL_TOP || nShape == VOXEL_SHAPE_VOID) {
+                    if (nShape == VOXEL_SHAPE_WALL || nShape == VOXEL_SHAPE_ROOF) {
                         heightInTiles++;
-                        if (nShape == VOXEL_SHAPE_WALL_TOP || nShape == VOXEL_SHAPE_VOID) break; 
+                        if (nShape == VOXEL_SHAPE_ROOF) break; 
                     } else {
                         break;
                     }
@@ -51,10 +83,10 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
                 VoxelVisualShape sE = VoxelWorld_ClassifyTile(x + 1, y);
                 VoxelVisualShape sW = VoxelWorld_ClassifyTile(x - 1, y);
                 
-                bool faceSouth = (sS != VOXEL_SHAPE_WALL && sS != VOXEL_SHAPE_WALL_TOP && sS != VOXEL_SHAPE_VOID);
-                bool faceNorth = (sN != VOXEL_SHAPE_WALL && sN != VOXEL_SHAPE_WALL_TOP && sN != VOXEL_SHAPE_VOID);
-                bool faceEast = (sE != VOXEL_SHAPE_WALL && sE != VOXEL_SHAPE_WALL_TOP && sE != VOXEL_SHAPE_VOID);
-                bool faceWest = (sW != VOXEL_SHAPE_WALL && sW != VOXEL_SHAPE_WALL_TOP && sW != VOXEL_SHAPE_VOID);
+                bool faceSouth = (sS != VOXEL_SHAPE_WALL && sS != VOXEL_SHAPE_ROOF && sS != VOXEL_SHAPE_VOID);
+                bool faceNorth = (sN != VOXEL_SHAPE_WALL && sN != VOXEL_SHAPE_ROOF && sN != VOXEL_SHAPE_VOID);
+                bool faceEast = (sE != VOXEL_SHAPE_WALL && sE != VOXEL_SHAPE_ROOF && sE != VOXEL_SHAPE_VOID);
+                bool faceWest = (sW != VOXEL_SHAPE_WALL && sW != VOXEL_SHAPE_ROOF && sW != VOXEL_SHAPE_VOID);
                 
                 if (!faceSouth && !faceEast && !faceWest && !faceNorth) faceSouth = true; 
                 
@@ -62,12 +94,23 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
                 float wz = (float)y;
                 float totalH = heightInTiles * 1.0f;
                 
+                float pWX = 0.0f, pWZ = 0.0f;
+                VoxelWorld_GetPlayerWorldCoords(&pWX, &pWZ);
+                bool isCutaway = (faceSouth && y > pWZ + 0.5f && shape != VOXEL_SHAPE_TREE);
+                
                 for (int i = 0; i < heightInTiles; i++) {
-                    gVoxelWallConsumed[(y - i) * 512 + x] = true;
+                    VoxelMesh_SetWallConsumed(x, y - i, true);
                 }
 
                 int topTileY = y - heightInTiles + 1;
-                int topM = VoxelWorld_GetMetatileId(x, topTileY);
+                
+                // Get the texture from the instance's own atlas!
+                int topM;
+                const struct VoxelMapInstance *topInst = VoxelWorld_GetMetatileIdAndInstance(x, topTileY, &topM);
+                
+                // If it belongs to a different instance, the atlas coordinates might be wrong.
+                // For now, we assume it's in the current instance's atlas or just use the UVs.
+                // In a perfect world, we'd bind topInst's texture here.
                 float t_u0 = (topM % 32) * 16.0f / atlasW;
                 float t_v0 = (topM / 32) * 16.0f / atlasH;
                 float t_u1 = t_u0 + (16.0f / atlasW);
@@ -77,15 +120,18 @@ void VoxelMesh_BuildWalls(int mapW, int mapH)
                 glColor3f(1.0f, 1.0f, 1.0f);
                 
                 // TOP FACE (Textured with top-most tile)
-                glBegin(GL_QUADS);
-                glTexCoord2f(t_u0, t_v0); glVertex3f(wx,      totalH, wz);
-                glTexCoord2f(t_u1, t_v0); glVertex3f(wx+1.0f, totalH, wz);
-                glTexCoord2f(t_u1, t_v1); glVertex3f(wx+1.0f, totalH, wz+1.0f);
-                glTexCoord2f(t_u0, t_v1); glVertex3f(wx,      totalH, wz+1.0f);
-                glEnd();
+                if (!isCutaway) {
+                    glBegin(GL_QUADS);
+                    glTexCoord2f(t_u0, t_v0); glVertex3f(wx,      totalH, wz);
+                    glTexCoord2f(t_u1, t_v0); glVertex3f(wx+1.0f, totalH, wz);
+                    glTexCoord2f(t_u1, t_v1); glVertex3f(wx+1.0f, totalH, wz+1.0f);
+                    glTexCoord2f(t_u0, t_v1); glVertex3f(wx,      totalH, wz+1.0f);
+                    glEnd();
+                }
 
                 glBegin(GL_QUADS);
                 for (int i = 0; i < heightInTiles; i++) {
+                    if (isCutaway && i > 0) continue;
                     int m = VoxelWorld_GetMetatileId(x, y - i);
                     float u0 = (m % 32) * 16.0f / atlasW;
                     float v0 = (m / 32) * 16.0f / atlasH;
@@ -137,7 +183,7 @@ static void VoxelMesh_DrawFurniture(int mapX, int mapY, VoxelVisualShape shape, 
     bool e_is_same = VoxelWorld_ClassifyTile(mapX + 1, mapY) == shape;
     bool w_is_same = VoxelWorld_ClassifyTile(mapX - 1, mapY) == shape;
 
-    if (shape == VOXEL_SHAPE_FURNITURE_TABLE) {
+    if (shape == VOXEL_SHAPE_TABLE) {
         float tHeight = 0.5f;
         float tThick = 0.1f;
         
@@ -217,7 +263,7 @@ static void VoxelMesh_DrawFurniture(int mapX, int mapY, VoxelVisualShape shape, 
         glEnable(GL_TEXTURE_2D);
         glColor3f(1.0f, 1.0f, 1.0f);
     }
-    else if (shape == VOXEL_SHAPE_FURNITURE_TV) {
+    else if (shape == VOXEL_SHAPE_FURNITURE) {
         float bHeight = 0.3f; // base height
         float tHeight = 1.0f; // tv height
         
@@ -276,7 +322,7 @@ static void VoxelMesh_DrawFurniture(int mapX, int mapY, VoxelVisualShape shape, 
         glEnable(GL_TEXTURE_2D);
         glColor3f(1.0f, 1.0f, 1.0f);
     }
-    else if (shape == VOXEL_SHAPE_FURNITURE_SHELF) {
+    else if (shape == VOXEL_SHAPE_WALL) {
         float sHeight = 1.6f;
         // Textured front
         glEnable(GL_TEXTURE_2D);
@@ -310,7 +356,7 @@ static void VoxelMesh_DrawFurniture(int mapX, int mapY, VoxelVisualShape shape, 
         glEnable(GL_TEXTURE_2D);
         glColor3f(1.0f, 1.0f, 1.0f);
     }
-    else if (shape == VOXEL_SHAPE_FURNITURE_CHAIR) {
+    else if (shape == VOXEL_SHAPE_FURNITURE) { // Fallback chair logic
         float sHeight = 0.4f;
         // Seat top (textured)
         glEnable(GL_TEXTURE_2D);
@@ -345,8 +391,8 @@ void VoxelMesh_DrawTile(int mapX, int mapY, VoxelVisualShape shape, int metatile
     
     // If this tile was consumed by VoxelMesh_BuildWalls (i.e. drawn as a vertical face),
     // we still want to draw it as a flat floor so there's ground underneath/behind it.
-    if (gVoxelWallConsumed && gVoxelWallConsumed[mapY * 512 + mapX]) {
-        shape = VOXEL_SHAPE_FLOOR;
+    if (VoxelMesh_IsWallConsumed(mapX, mapY)) {
+        shape = VOXEL_SHAPE_FLAT;
     }
 
     float wx = (float)mapX;
@@ -365,22 +411,22 @@ void VoxelMesh_DrawTile(int mapX, int mapY, VoxelVisualShape shape, int metatile
     float inset = 0.0f;
 
     switch (shape) {
-        case VOXEL_SHAPE_FLOOR: h = 0.0f; break;
-        case VOXEL_SHAPE_LOW_BLOCK: h = 0.4f; break;
-        case VOXEL_SHAPE_MEDIUM_BLOCK: h = 0.8f; break;
+        case VOXEL_SHAPE_FLAT: h = 0.0f; break;
+        case VOXEL_SHAPE_DECAL: h = 0.02f; break; // Slight offset for rugs
+        case VOXEL_SHAPE_WATER: h = -0.1f; break; // Slight recess for water
+        case VOXEL_SHAPE_LOW: h = 0.4f; break;
+        case VOXEL_SHAPE_LEDGE: h = 0.4f; break; // Ledges drawn as half-height block
         case VOXEL_SHAPE_COUNTER: h = 0.7f; break;
-        case VOXEL_SHAPE_VERTICAL_SPRITE: h = 1.0f; isSprite = true; break;
-        case VOXEL_SHAPE_DECORATION: h = 0.3f; break;
-        case VOXEL_SHAPE_DOOR: h = 0.05f; break;
-        case VOXEL_SHAPE_STAIRS: h = 0.2f; break;
+        case VOXEL_SHAPE_SIGN: h = 1.0f; isSprite = true; break; // Render sign as a vertical sprite billboard
+        case VOXEL_SHAPE_STAIRS: h = 0.2f; break; // Simple stairs representation
         case VOXEL_SHAPE_WALL: h = 0.0f; break; // Handled by VoxelMesh_BuildWalls
-        case VOXEL_SHAPE_WALL_TOP: h = 0.0f; break;
+        case VOXEL_SHAPE_TREE: h = 0.0f; break; // Handled by VoxelMesh_BuildWalls
+        case VOXEL_SHAPE_BUILDING: h = 0.0f; break; // Handled by VoxelMesh_BuildWalls
+        case VOXEL_SHAPE_ROOF: h = 0.0f; break; // Handled by VoxelMesh_BuildWalls
         // Furniture
-        case VOXEL_SHAPE_FURNITURE_TABLE:
-        case VOXEL_SHAPE_FURNITURE_CHAIR:
-        case VOXEL_SHAPE_FURNITURE_SHELF:
-        case VOXEL_SHAPE_FURNITURE_TV:
-        case VOXEL_SHAPE_FURNITURE_BED:
+        case VOXEL_SHAPE_TABLE:
+        case VOXEL_SHAPE_FURNITURE:
+        case VOXEL_SHAPE_BED:
             VoxelMesh_DrawFurniture(mapX, mapY, shape, u0, v0, u1, v1);
             return;
         default: h = 1.0f; break;
