@@ -611,6 +611,8 @@ void VoxelRenderer_RenderFrame(void)
     glEnable(GL_ALPHA_TEST);
     glAlphaFunc(GL_GREATER, 0.5f);
 
+    // Set a sky blue background color instead of black
+    glClearColor(0.53f, 0.81f, 0.92f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     VoxelCamera_ApplyProjection(&sCamera, winW, winH);

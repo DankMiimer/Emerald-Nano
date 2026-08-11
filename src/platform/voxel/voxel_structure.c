@@ -229,10 +229,15 @@ void VoxelStructure_RenderAll(GLuint atlasTex)
                 float wx = (float)x;
                 float wz = (float)y;
 
-                bool faceSouth = !TileExistsInStruct(st, x, y + 1);
-                bool faceNorth = !TileExistsInStruct(st, x, y - 1);
-                bool faceEast = !TileExistsInStruct(st, x + 1, y);
-                bool faceWest = !TileExistsInStruct(st, x - 1, y);
+                VoxelVisualShape sShape = VoxelWorld_ClassifyTile(x, y + 1);
+                VoxelVisualShape nShape = VoxelWorld_ClassifyTile(x, y - 1);
+                VoxelVisualShape eShape = VoxelWorld_ClassifyTile(x + 1, y);
+                VoxelVisualShape wShape = VoxelWorld_ClassifyTile(x - 1, y);
+
+                bool faceSouth = !(sShape == VOXEL_SHAPE_WALL || sShape == VOXEL_SHAPE_BUILDING || sShape == VOXEL_SHAPE_ROOF);
+                bool faceNorth = !(nShape == VOXEL_SHAPE_WALL || nShape == VOXEL_SHAPE_BUILDING || nShape == VOXEL_SHAPE_ROOF);
+                bool faceEast  = !(eShape == VOXEL_SHAPE_WALL || eShape == VOXEL_SHAPE_BUILDING || eShape == VOXEL_SHAPE_ROOF);
+                bool faceWest  = !(wShape == VOXEL_SHAPE_WALL || wShape == VOXEL_SHAPE_BUILDING || wShape == VOXEL_SHAPE_ROOF);
 
                 int heightToDraw = isCutaway ? 1 : maxH;
 
@@ -310,10 +315,15 @@ void VoxelStructure_RenderAll(GLuint atlasTex)
                 float wx = (float)x;
                 float wz = (float)y;
 
-                bool faceSouth = !TileExistsInStruct(st, x, y + 1);
-                bool faceNorth = !TileExistsInStruct(st, x, y - 1);
-                bool faceEast = !TileExistsInStruct(st, x + 1, y);
-                bool faceWest = !TileExistsInStruct(st, x - 1, y);
+                VoxelVisualShape sShape = VoxelWorld_ClassifyTile(x, y + 1);
+                VoxelVisualShape nShape = VoxelWorld_ClassifyTile(x, y - 1);
+                VoxelVisualShape eShape = VoxelWorld_ClassifyTile(x + 1, y);
+                VoxelVisualShape wShape = VoxelWorld_ClassifyTile(x - 1, y);
+
+                bool faceSouth = !(sShape == VOXEL_SHAPE_TREE);
+                bool faceNorth = !(nShape == VOXEL_SHAPE_TREE);
+                bool faceEast  = !(eShape == VOXEL_SHAPE_TREE);
+                bool faceWest  = !(wShape == VOXEL_SHAPE_TREE);
 
                 for (int h = 0; h < 2; h++) {
                     int m = VoxelWorld_GetMetatileId(x, y - h);

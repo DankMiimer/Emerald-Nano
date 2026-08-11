@@ -30,6 +30,7 @@ The project runs the decompiled game code directly. It is not a bundled GBA emul
 - Added Android rendering, frame pacing, audio output, writable save storage, and lifecycle handling.
 - Added an Android-native labeled multitouch overlay and SDL game-controller input.
 - Added launcher icons on Android and an embedded multi-resolution icon on Windows.
+- Added an experimental 2.5D voxel renderer engine for Pokémon maps (`--voxel`).
 
 ## Controls
 
@@ -102,6 +103,18 @@ pokeemerald.sav
 ```
 
 Keep this file if you clean or move the build.
+
+## Voxel Engine (Experimental)
+
+This repository includes an experimental 2.5D voxel renderer. Instead of drawing flat 2D tilemaps, the engine extrapolates Pokémon map collision and metadata into a 3D environment with seamless map connections, structure grouping, and dynamic camera cutaways.
+
+To run the game in voxel mode on Linux, pass the `--voxel` flag:
+
+```sh
+./pokeemerald --voxel
+```
+
+To enable a free-roaming 3D First-Person camera instead of the fixed isometric follow-camera, press `F7` in-game while in voxel mode. Use `W`/`A`/`S`/`D` to move and `Space`/`Shift` to ascend/descend.
 
 ## Android Build
 
