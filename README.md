@@ -1,146 +1,88 @@
-# pokeemerald-multiplatform
+# Pokémon Emerald — Dual Screen
 
-An experimental Windows, Linux, and Android port of the [Pokemon Emerald decompilation](https://github.com/pret/pokeemerald).
+A dual-screen mod of the [Pokémon Emerald decompilation](https://github.com/pret/pokeemerald),
+built for the AYN Thor and other dual-screen Android devices. The game runs
+natively (no emulator) on the top screen while the bottom screen becomes a
+live touch companion — party, map, bag, trainer card, and a Gen 4-style
+touch battle interface.
 
-The project runs the decompiled game code directly. It is not a bundled GBA emulator and does not include a commercial ROM.
+Based on [pokeemerald-multiplatform](https://github.com/gradenGnostic/pokeemerald-multiplatform),
+inspired by [tmc-android](https://github.com/samyost1/tmc-android).
+No ROM or copyrighted assets are included; everything the bottom screen
+shows is decoded at runtime from the game's own data.
 
-## Platform Status
+## Features
 
-| Platform | Status | Output |
-| --- | --- | --- |
-| Windows | Working through the SDL2 backend | `pokeemerald.exe` |
-| Linux | Working native 32-bit SDL2 build | `pokeemerald` |
-| Android | Working experimental ARMv7 SDL2 build | `android/app/build/outputs/apk/debug/app-debug.apk` |
-| GBA ROM | Upstream target | `pokeemerald.gba` |
+- **Party** — animated icons, HP bars, status; tap a Pokémon for a detail
+  page with stats, nature, ability, moves and exp.
+- **Battle, Gen 4 style** — during battles the bottom screen takes over:
+  big FIGHT/BAG/POKéMON/RUN buttons and a touch move grid with PP and
+  types, while the top screen shows only the scene and message box. The
+  game's battle engine stays fully authoritative — touches drive the real
+  in-game cursor through a frame-timed virtual gamepad. (Classic top-screen
+  menus are one settings toggle away, and are used automatically for
+  Safari/link/tutorial battles.)
+- **Map** — the real Hoenn Pokénav map, composed from the game's tile data,
+  with your live location and the in-game location name.
+- **Bag** — all five pockets, live quantities.
+- **Trainer card** — styled after the in-game card: star tint, IDNo., the
+  actual badge sprites and your trainer's front pic.
+- **Settings** — background art/black/white, widescreen, touch-control
+  overlay, battle menu placement. Persisted with the port's config.
+- Everything renders in the game's own font, decoded from the ROM data at
+  runtime.
 
-## Port Changes
+## How it works
 
-- Repaired the portable MP2K/M4A music player and sound mixer build.
-- Added SDL2 float audio output at 42060 Hz.
-- Sanitized invalid floating-point samples independently in the M4A and CGB audio paths, eliminating loud buzzing without discarding valid audio.
-- Added output headroom and clipping protection.
-- Fixed structure and pointer conversions required by the portable audio engine.
-- Fixed portable BIOS, DMA, flash-save, trainer-card, and sound-related compilation errors.
-- Added working save-file access through `pokeemerald.sav`.
-- Added a Wine launcher for the Windows build.
-- Added native 32-bit Linux compilation and SDL2 linkage.
-- Added aspect-ratio-preserving 3:2 rendering with independently scaled background artwork and a transparent frame.
-- Added persistent display settings with automatic support for additional numbered background images.
-- Added an experimental Android SDL2/Gradle project and an ARMv7 cross-compilation pipeline.
-- Added Android rendering, frame pacing, audio output, writable save storage, and lifecycle handling.
-- Added an Android-native labeled multitouch overlay and SDL game-controller input.
-- Added launcher icons on Android and an embedded multi-resolution icon on Windows.
+The whole game compiles into a single native library, so game state is
+read in-process — no RAM peeking, no emulator hooks:
 
-## Controls
+- `src/platform/dualscreen_bridge.c` snapshots party/battle/overworld/bag
+  state to JSON once per frame window (at vblank, while the game thread is
+  parked) and exposes it over JNI, along with runtime-decoded graphics
+  (mon icons, the region map, badges, trainer pics, the game font).
+- The Android side (`android/app/src/main/java/.../DualScreen*.java`)
+  presents a canvas UI on the secondary display via the `Presentation`
+  API, polling the bridge. The window is non-focusable so controller
+  input never leaves the game.
+- Touch input reaches the game through a virtual key queue consumed by
+  `Platform_GetKeyInput`, one button state per frame.
 
-| GBA control | Keyboard |
-| --- | --- |
-| A | `Z` |
-| B | `X` |
-| Start | `Enter` |
-| Select | `Backslash` |
-| L | `A` |
-| R | `S` |
-| D-pad | Arrow keys |
-| Fast-forward | `Space` |
-| Pause | `Ctrl+P` |
-| Soft reset | `Ctrl+R` |
+## Building (Linux / WSL)
 
-Windows XInput controllers are supported by the SDL2 backend. Android supports SDL-compatible gamepads, including D-pad and left analog-stick movement. Native Linux currently uses keyboard input.
-
-## Windows Build
-
-The Windows target uses the 32-bit MinGW toolchain, SDL2, and ImageMagick. ImageMagick converts the PNG border assets to alpha-preserving BMP files supported by the Windows SDL2 build:
-
-```sh
-make -f Makefile_pc -j4
-```
-
-Place `SDL2.dll` beside `pokeemerald.exe`. On Linux, the Windows build can be launched through Wine with:
-
-```sh
-./launch.sh
-```
-
-## Linux Build
-
-The game data contains 32-bit pointers, so the native Linux target must currently be built as a 32-bit executable. Install a multilib C toolchain plus 32-bit SDL2 and SDL2_image development files, then run:
-
-```sh
-make -f Makefile_pc linux -j4
-./pokeemerald
-```
-
-Linux objects are kept separately under `build/linux`, so they do not interfere with the Windows build.
-
-The resulting executable is `pokeemerald` in the repository root.
-
-## Display Settings
-
-The in-game Options menu includes a `DISPLAY` page. Settings apply immediately and are written to `pokeemerald.cfg`; Android stores the same config in the app's private storage.
-
-Desktop builds support fullscreen, window size, integer scaling, VSync, border frame visibility, background selection, and volume. Android supports border frame visibility, background selection, and volume.
-
-## Border Artwork
-
-Windows, Linux, and Android use the same border assets from the repository root:
-
-- `Border.png` is the transparent frame fitted around the centered 3:2 gameplay viewport.
-- `BG.png` is the default background and scales independently to fill the complete output.
-- `BG1.png`, `BG2.png`, and subsequent sequentially numbered files add selectable backgrounds after the default `BG` entry.
-
-The background selector order is `BG`, `BG 1`, `BG 2`, and so on, followed by `OFF` for a plain black background. Numbered files must be contiguous; for example, `BG2.png` is only detected when `BG1.png` is also present.
-
-Backgrounds and the frame should use a 1280x720 canvas. Keep the frame opening centered at the same location and dimensions as `Border.png` so it remains aligned at different output aspect ratios.
-
-## Saving
-
-Save data is read from and written to:
-
-```text
-pokeemerald.sav
-```
-
-Keep this file if you clean or move the build.
-
-## Android Build
-
-The Android project targets API 36 and `armeabi-v7a`. The 32-bit ABI is required by the game's current pointer layout. Android SDK 36, NDK `26.3.11579264`, CMake 3.22.1, and a compatible JDK are required.
-
-Initialize SDL2 and apply the Android lifecycle patch once after cloning:
+Prereqs: `gcc-multilib`, 32-bit SDL2 dev libs, `g++`, `pkg-config`,
+`libpng-dev`, `binutils-arm-none-eabi`, JDK 17, Android SDK (platform 36,
+build-tools 36, NDK 26.3.11579264, cmake 3.22.1).
 
 ```sh
 git submodule update --init --recursive
-git -C android/SDL2 apply ../patches/sdl2-android-lifecycle.patch
+git -C android/SDL2 apply --unidiff-zero ../patches/sdl2-android-lifecycle.patch
+
+make tools                          # host-side asset tools
+make -f Makefile_pc generated       # generated headers the CMake build needs
+PKG_CONFIG_PATH=/usr/lib/i386-linux-gnu/pkgconfig make -f Makefile_pc linux -j8
+                                    # desktop build; also converts all graphics
+
+echo sdk.dir=$HOME/Android/sdk > android/local.properties
+JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
+    android/SDL2/android-project/gradlew -p android :app:assembleDebug
 ```
 
-Set `JAVA_HOME` and `ANDROID_HOME`, then build with SDL2's Gradle wrapper:
+The APK lands in `android/app/build/outputs/apk/debug/`. Saves live in the
+app's private storage as `pokeemerald.sav` (standard 128KB flash format —
+cart and emulator saves work).
 
-```sh
-android/SDL2/android-project/gradlew -p android :app:assembleDebug
-```
+`tools/dualscreen/savetool.py` can inspect and edit saves for testing
+(`info` / `teleport` / `heal` / `money`).
 
-Install the debug APK on a connected device with:
+## Credits
 
-```sh
-adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-```
+- [pret/pokeemerald](https://github.com/pret/pokeemerald) — the decompilation.
+- [gradenGnostic/pokeemerald-multiplatform](https://github.com/gradenGnostic/pokeemerald-multiplatform) —
+  the native SDL2 port this builds on.
+- [samyost1/tmc-android](https://github.com/samyost1/tmc-android) — the
+  dual-screen blueprint.
 
-Android saves are stored in the app's writable private storage. Windows and Linux continue to use `pokeemerald.sav` in the working directory.
-
-Android includes a labeled multitouch overlay for the D-pad, A, B, Start, Select, L, and R.
-
-## Upstream Project
-
-This repository is based on the Pokémon Emerald decompilation. The upstream project builds the following ROM:
-
-- `pokeemerald.gba`
-- SHA-1: `f3ae088181bf583e55daf962a92bb46f4f1d07b7`
-
-See [INSTALL.md](INSTALL.md) for the original decompilation setup and [pret.github.io](https://pret.github.io/) for other pret projects.
-
-## Legal
-
-Pokémon and Pokémon Emerald are trademarks of Nintendo, Creatures Inc., and GAME FREAK inc. This is an unofficial fan project and is not affiliated with or endorsed by those companies.
-
-The scoped license in [LICENSE](LICENSE) applies only to original multiplatform-port modifications contributed through this fork. It does not relicense upstream code, third-party components, or copyrighted game assets.
+This project builds on a decompilation of a copyrighted game. Build it
+with your own legally obtained copy's save data; nothing proprietary ships
+in this repository.
