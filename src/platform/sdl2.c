@@ -377,10 +377,13 @@ int main(int argc, char **argv)
     ApplyPlatformSettings();
 
     if (sdlRenderer != NULL) {
+        // Allocated at the widest supported geometry; only the leftmost
+        // gRenderWidth columns are uploaded and drawn, so widescreen can be
+        // toggled at runtime without recreating the texture.
         sdlTexture = SDL_CreateTexture(sdlRenderer,
                                        SDL_PIXELFORMAT_ARGB8888,
                                        SDL_TEXTUREACCESS_STREAMING,
-                                       DISPLAY_WIDTH, DISPLAY_HEIGHT);
+                                       MAX_RENDER_WIDTH, DISPLAY_HEIGHT);
         if (sdlTexture == NULL)
         {
             DBGPRINTF("Texture could not be created! SDL_Error: %s\n", SDL_GetError());
@@ -500,23 +503,26 @@ int main(int argc, char **argv)
                         int gameWidth;
                         if (sPlatformSettings[PLATFORM_SETTING_INTEGER_SCALE])
                         {
-                            int scale = outputWidth / DISPLAY_WIDTH;
+                            int scale = outputWidth / gRenderWidth;
                             if (outputHeight / DISPLAY_HEIGHT < scale)
                                 scale = outputHeight / DISPLAY_HEIGHT;
                             if (scale < 1)
                                 scale = 1;
-                            gameWidth = DISPLAY_WIDTH * scale;
+                            gameWidth = gRenderWidth * scale;
                             gameHeight = DISPLAY_HEIGHT * scale;
                         }
                         else
                         {
+                            // Follow the rendered aspect rather than a fixed 3:2
+                            // so the widened frame is not squeezed back to it.
                             gameHeight = outputHeight * 8 / 9;
-                            gameWidth = gameHeight * 3 / 2;
+                            gameWidth = gameHeight * gRenderWidth / DISPLAY_HEIGHT;
                         }
                         SDL_Rect gameViewport = {(outputWidth - gameWidth) / 2,
                                                  (outputHeight - gameHeight) / 2,
                                                  gameWidth, gameHeight};
-                        SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, &gameViewport);
+                        SDL_Rect frameSrc = {0, 0, gRenderWidth, DISPLAY_HEIGHT};
+                        SDL_RenderCopy(sdlRenderer, sdlTexture, &frameSrc, &gameViewport);
                         if (sPlatformSettings[PLATFORM_SETTING_BORDER] && sdlBorderTexture != NULL)
                         {
                             SDL_Rect borderSource = {141, 18, 1000, 683};
@@ -531,50 +537,41 @@ int main(int argc, char **argv)
                             SDL_RenderCopy(sdlRenderer, sdlBorderTexture, &borderSource, &borderViewport);
                         }
 #else
-                        if (sdlRenderer)
                         {
+                            // Widescreen now widens what the PPU renders rather
+                            // than stretching a 240px frame, so the logical size
+                            // simply follows the render width and SDL letterboxes
+                            // the remainder -- pixels stay square either way.
+                            // This still has to be re-applied when the surface
+                            // size changes: on a cold start the GL surface can
+                            // be at its initial size on the first frame, which
+                            // otherwise pins the viewport to a stale, too-small
+                            // rect with black bars around it for the session.
+                            static int sAppliedWidth = -1;
+                            static int sAppliedOutputWidth = -1;
+                            static int sAppliedOutputHeight = -1;
                             int outputWidth = 0;
                             int outputHeight = 0;
-                            SDL_GetRendererOutputSize(sdlRenderer, &outputWidth, &outputHeight);
-                            if (outputWidth <= 0 || outputHeight <= 0)
-                                SDL_GetWindowSize(sdlWindow, &outputWidth, &outputHeight);
-
-                            // Logical size is how the 1620x1080 pillarbox
-                            // freezes in. Always blit in real pixels.
-                            SDL_RenderSetLogicalSize(sdlRenderer, 0, 0);
-                            SDL_RenderSetIntegerScale(sdlRenderer, SDL_FALSE);
-                            SDL_Rect surface = {0, 0, outputWidth, outputHeight};
-                            SDL_RenderSetViewport(sdlRenderer, &surface);
-
-                            SDL_Rect dest = surface;
-                            if (!sPlatformSettings[PLATFORM_SETTING_WIDESCREEN]
-                             && outputWidth > 0 && outputHeight > 0)
+                            if (sdlRenderer != NULL)
+                                SDL_GetRendererOutputSize(sdlRenderer, &outputWidth, &outputHeight);
+                            if (sdlRenderer != NULL
+                             && (gRenderWidth != sAppliedWidth
+                              || outputWidth != sAppliedOutputWidth
+                              || outputHeight != sAppliedOutputHeight))
                             {
-                                int scaleW = outputWidth / DISPLAY_WIDTH;
-                                int scaleH = outputHeight / DISPLAY_HEIGHT;
-                                int scale = scaleW < scaleH ? scaleW : scaleH;
-                                if (sPlatformSettings[PLATFORM_SETTING_INTEGER_SCALE])
-                                {
-                                    if (scale < 1)
-                                        scale = 1;
-                                    dest.w = DISPLAY_WIDTH * scale;
-                                    dest.h = DISPLAY_HEIGHT * scale;
-                                }
-                                else
-                                {
-                                    dest.h = outputHeight;
-                                    dest.w = dest.h * DISPLAY_WIDTH / DISPLAY_HEIGHT;
-                                    if (dest.w > outputWidth)
-                                    {
-                                        dest.w = outputWidth;
-                                        dest.h = dest.w * DISPLAY_HEIGHT / DISPLAY_WIDTH;
-                                    }
-                                }
-                                dest.x = (outputWidth - dest.w) / 2;
-                                dest.y = (outputHeight - dest.h) / 2;
+                                SDL_RenderSetLogicalSize(sdlRenderer, gRenderWidth, DISPLAY_HEIGHT);
+                                // Integer scaling would round 288x160 down to 6x
+                                // on a 1080p panel and hand the bars straight
+                                // back, so it only applies to the narrow frame.
+                                SDL_RenderSetIntegerScale(sdlRenderer,
+                                        gRenderMargin == 0 ? SDL_TRUE : SDL_FALSE);
+                                sAppliedWidth = gRenderWidth;
+                                sAppliedOutputWidth = outputWidth;
+                                sAppliedOutputHeight = outputHeight;
                             }
-                            SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, &dest);
                         }
+                        SDL_Rect frameSrc = {0, 0, gRenderWidth, DISPLAY_HEIGHT};
+                        if (sdlRenderer) SDL_RenderCopy(sdlRenderer, sdlTexture, &frameSrc, NULL);
 #endif
                     }
 #ifdef __ANDROID__
@@ -906,6 +903,12 @@ static void ApplyDisplayMode(void)
 
 static void ApplyPlatformSettings(void)
 {
+    // Widescreen widens the frame the software PPU renders. Everything the
+    // game itself computes stays in the GBA's 240px space; the margins are
+    // filled by revealing BG columns the game already scrolls past.
+    gRenderMargin = sPlatformSettings[PLATFORM_SETTING_WIDESCREEN] ? WIDESCREEN_MARGIN : 0;
+    gRenderWidth = DISPLAY_WIDTH + 2 * gRenderMargin;
+
     if (sdlRenderer == NULL)
         return; // In voxel mode, no SDL renderer to configure
     SDL_RenderSetVSync(sdlRenderer, sPlatformSettings[PLATFORM_SETTING_VSYNC]);
@@ -1643,17 +1646,18 @@ u16 Platform_GetKeyInput(void)
 
 void VDraw(SDL_Texture *texture)
 {
-    static uint16_t gbaImage[DISPLAY_WIDTH * DISPLAY_HEIGHT];
-    static uint32_t image[DISPLAY_WIDTH * DISPLAY_HEIGHT];
+    static uint16_t gbaImage[MAX_RENDER_WIDTH * DISPLAY_HEIGHT];
+    static uint32_t image[MAX_RENDER_WIDTH * DISPLAY_HEIGHT];
 
     static int sClassicFrames = 0;
     sClassicFrames++;
-    memset(gbaImage, 0, sizeof(gbaImage));
+    int pixelCount = gRenderWidth * DISPLAY_HEIGHT;
+    memset(gbaImage, 0, pixelCount * sizeof(gbaImage[0]));
     DrawFrame(gbaImage);
     if (sClassicFrames == 900) {
         printf("[Classic2D] frame 900, p[100]=%04x\n", gbaImage[100]);
     }
-    for (int i = 0; i < DISPLAY_WIDTH * DISPLAY_HEIGHT; i++)
+    for (int i = 0; i < pixelCount; i++)
     {
         uint16_t color = gbaImage[i];
         uint32_t r = (color & 0x1F) * 255 / 31;
@@ -1661,7 +1665,10 @@ void VDraw(SDL_Texture *texture)
         uint32_t b = ((color >> 10) & 0x1F) * 255 / 31;
         image[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
     }
-    SDL_UpdateTexture(texture, NULL, image, DISPLAY_WIDTH * sizeof(Uint32));
+    // DrawFrame packs its rows at gRenderWidth, so upload that sub-rectangle
+    // of the (wider) texture rather than the whole thing.
+    SDL_Rect frameRect = {0, 0, gRenderWidth, DISPLAY_HEIGHT};
+    SDL_UpdateTexture(texture, &frameRect, image, gRenderWidth * sizeof(Uint32));
     REG_VCOUNT = 161; // prep for being in VBlank period
 }
 

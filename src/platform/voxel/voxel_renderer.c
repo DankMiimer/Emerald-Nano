@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "global.h"
+#include "platform.h"
 #include "fieldmap.h"
 #include "palette.h"
 #include "decompress.h"
@@ -425,15 +426,19 @@ void VoxelRenderer_RenderFrame(void)
     if (!VoxelWorld_IsMapAvailable()) {
         extern void DrawFrame(uint16_t *pixels);
 
-        static uint16_t gbaImage[240 * 160];
-        static uint32_t image[240 * 160];
+        // DrawFrame writes gRenderWidth columns per row, so these have to be
+        // sized for the widest geometry -- at 240*160 widescreen would run
+        // straight off the end of both buffers.
+        static uint16_t gbaImage[MAX_RENDER_WIDTH * DISPLAY_HEIGHT];
+        static uint32_t image[MAX_RENDER_WIDTH * DISPLAY_HEIGHT];
         static int sFallbackFrames = 0;
         sFallbackFrames++;
 
-        memset(gbaImage, 0, sizeof(gbaImage));
+        int pixelCount = gRenderWidth * DISPLAY_HEIGHT;
+        memset(gbaImage, 0, pixelCount * sizeof(gbaImage[0]));
         DrawFrame(gbaImage);
 
-        for (int i = 0; i < 240 * 160; i++) {
+        for (int i = 0; i < pixelCount; i++) {
             uint16_t color = gbaImage[i];
             uint32_t r = (color & 0x1F) * 255 / 31;
             uint32_t g = ((color >> 5) & 0x1F) * 255 / 31;
@@ -473,7 +478,7 @@ void VoxelRenderer_RenderFrame(void)
 
         glBindTexture(GL_TEXTURE_2D, sScreenTex);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 240, 160, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, gRenderWidth, DISPLAY_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
 
         if (sFallbackFrames <= 5)
             printf("[Voxel2D] glGetError after glTexImage2D: %d\n", glGetError());

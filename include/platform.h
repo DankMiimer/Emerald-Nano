@@ -4,6 +4,29 @@
 #include "global.h"
 #include "siirtc.h"
 
+// Widescreen rendering geometry.
+//
+// The GBA viewport is DISPLAY_WIDTH (240) wide and every coordinate the game
+// computes stays in that space. Widescreen works by having the software PPU
+// render extra columns either side of it and revealing what the game already
+// scrolls past, rather than by rescaling anything -- so pixels stay square.
+//
+// Buffers are sized for the widest mode; gRenderWidth/gRenderMargin pick the
+// active geometry at runtime so the setting can be toggled without a rebuild.
+// Buffer index 0 holds game-space column -gRenderMargin.
+// 24 fills a 16:9 panel: 240 + 48 = 288, which is 1.8:1 and lands within a
+// few pixels of 1920x1080. It needs the overworld map layers widened to 512px
+// first, though -- until then only an 8px margin (256px, 1.6:1) has real map
+// behind it, because that is all a 256px-wide BG map can cover.
+#define MAX_RENDER_MARGIN 24
+#define WIDESCREEN_MARGIN 8
+#define MAX_RENDER_WIDTH  (DISPLAY_WIDTH + 2 * MAX_RENDER_MARGIN)
+
+// Layers narrower than the widened frame skip the margin columns entirely, so
+// only maps wide enough to hold real content (the overworld's) fill them.
+extern int gRenderWidth;
+extern int gRenderMargin;
+
 void Platform_StoreSaveFile(void);
 void Platform_ReadFlash(u16 sectorNum, u32 offset, u8 *dest, u32 size);
 void Platform_QueueAudio(float *audioBuffer, s32 samplesPerFrame);

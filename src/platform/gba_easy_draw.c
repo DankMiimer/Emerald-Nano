@@ -1,6 +1,7 @@
 #ifdef RENDERER_EASY_DRAW
 #include "global.h"
 #include <stdbool.h>
+#include "platform.h"
 #include "platform/dma.h"
 
 #define mosaicBGEffectX (REG_MOSAIC & 0xF)
@@ -28,11 +29,14 @@
 
 extern void (*const gIntrTable[])(void);
 
+int gRenderWidth = DISPLAY_WIDTH;
+int gRenderMargin = 0;
+
 struct scanlineData {
-    uint16_t layers[4][DISPLAY_WIDTH];
-    uint16_t spriteLayers[4][DISPLAY_WIDTH];
+    uint16_t layers[4][MAX_RENDER_WIDTH];
+    uint16_t spriteLayers[4][MAX_RENDER_WIDTH];
     uint16_t bgcnts[4];
-    uint16_t winMask[DISPLAY_WIDTH];
+    uint16_t winMask[MAX_RENDER_WIDTH];
     //priority bookkeeping
     char bgtoprio[4]; //background to priority
     char prioritySortedBgs[4][4];
@@ -71,8 +75,25 @@ static void RenderBGScanline(int bgNum, uint16_t control, uint16_t hoffs, uint16
     hoffs &= 0x1FF;
     voffs &= 0x1FF;
 
-    for (unsigned int x = 0; x < DISPLAY_WIDTH; x++)
+    for (int i = 0; i < gRenderWidth; i++)
     {
+        // Buffer index 0 holds game-space column -gRenderMargin. The 0x1FF
+        // mask below wraps the negative columns into the BG map the same way
+        // the hardware does, so a 512px-wide map fills the margins with real
+        // tiles and a 256px one simply repeats -- which is why only screens
+        // using wide maps let the margins show (see gRenderMarginsVisible).
+        int x = i - gRenderMargin;
+
+        // A map narrower than the widened frame has nothing to show out here --
+        // it would just repeat its left edge -- so leave the margin columns to
+        // whichever layer is wide enough to fill them, or to the backdrop.
+        // This is what keeps menus, battles and the overworld's own text layer
+        // from smearing across the widened frame. Note the comparison is
+        // against gRenderWidth, not 240: a 256px map genuinely does have
+        // content for an 8px margin, and only comes up short past that.
+        if (mapWidthInPixels < gRenderWidth && (x < 0 || x >= DISPLAY_WIDTH))
+            continue;
+
         uint16_t *bgmap = (uint16_t *)BG_SCREEN_ADDR(screenBaseBlock);
         // adjust for scroll
         unsigned int xx;
@@ -128,10 +149,10 @@ static void RenderBGScanline(int bgNum, uint16_t control, uint16_t hoffs, uint16
                 pixel &= 0xF;
 
             if (pixel != 0)
-                line[x] = pal[16 * paletteNum + pixel] | 0x8000;
+                line[i] = pal[16 * paletteNum + pixel] | 0x8000;
         }
         else {
-            line[x] = pal[pixel] | 0x8000;
+            line[i] = pal[pixel] | 0x8000;
         }
     }
 }
@@ -276,9 +297,14 @@ static void RenderRotScaleBGScanline(int bgNum, uint16_t control, uint16_t x, ui
     int realX = currentX;
     int realY = currentY;
 
+    // The affine walk steps one texel per column, so rewind it to the first
+    // rendered column: gRenderMargin columns left of the GBA viewport.
+    realX -= gRenderMargin * pa;
+    realY -= gRenderMargin * pc;
+
     if (bgcnt->areaOverflowMode)
     {
-        for (int x = 0; x < DISPLAY_WIDTH; x++)
+        for (int x = 0; x < gRenderWidth; x++)
         {
             int xxx = (realX >> 8) & maskX;
             int yyy = (realY >> 8) & maskY;
@@ -300,7 +326,7 @@ static void RenderRotScaleBGScanline(int bgNum, uint16_t control, uint16_t x, ui
     }
     else
     {
-        for (int x = 0; x < DISPLAY_WIDTH; x++)
+        for (int x = 0; x < gRenderWidth; x++)
         {
             int xxx = (realX >> 8);
             int yyy = (realY >> 8);
@@ -330,11 +356,14 @@ static void RenderRotScaleBGScanline(int bgNum, uint16_t control, uint16_t x, ui
     //luckily i dont think pokemon emerald uses mosaic on affine bgs
     if (control & BGCNT_MOSAIC && mosaicBGEffectX > 0)
     {
-        for (int x = 0; x < DISPLAY_WIDTH; x++)
+        for (int i = 0; i < gRenderWidth; i++)
         {
-            uint16_t color = line[applyBGHorizontalMosaicEffect(x)];
-            line[x] = color;
-            
+            // Mosaic snaps to a grid anchored on the GBA viewport, so it has
+            // to be quantised in game space and shifted back into the buffer.
+            int x = i - gRenderMargin;
+            uint16_t color = line[applyBGHorizontalMosaicEffect(x) + gRenderMargin];
+            line[i] = color;
+
         }
     }
 }
@@ -573,9 +602,11 @@ static void DrawSprites(struct scanlineData* scanline, uint16_t vcount, bool win
                 int tex_x;
                 int tex_y;
 
-                unsigned int global_x = local_x + x;
+                // Game-space column, and where it lands in the render buffer.
+                int global_x = local_x + x;
+                int buf_x = global_x + gRenderMargin;
 
-                if (global_x < 0 || global_x >= DISPLAY_WIDTH)
+                if (buf_x < 0 || buf_x >= gRenderWidth)
                     continue;
 
                 if (oam->mosaic == 1)
@@ -627,22 +658,21 @@ static void DrawSprites(struct scanlineData* scanline, uint16_t vcount, bool win
                     //if sprite mode is 2 then write to the window mask instead
                     if (isObjWin)
                     {
-                        if (scanline->winMask[global_x] & WINMASK_WINOUT)
-                        scanline->winMask[global_x] = (REG_WINOUT >> 8) & 0x3F;
+                        if (scanline->winMask[buf_x] & WINMASK_WINOUT)
+                        scanline->winMask[buf_x] = (REG_WINOUT >> 8) & 0x3F;
                         continue;
                     }
                     //this code runs if pixel is to be drawn
-                    if (global_x < DISPLAY_WIDTH && global_x >= 0)
                     {
                         //check if its enabled in the window (if window is enabled)
-                        winShouldBlendPixel = (windowsEnabled == false || scanline->winMask[global_x] & WINMASK_CLR);
+                        winShouldBlendPixel = (windowsEnabled == false || scanline->winMask[buf_x] & WINMASK_CLR);
                         
                         //has to be separated from the blend mode switch statement because of OBJ semi transparancy feature
                         if ((blendMode == 1 && REG_BLDCNT & BLDCNT_TGT1_OBJ && winShouldBlendPixel) || isSemiTransparent)
                         {
                             uint16_t targetA = color;
                             uint16_t targetB = 0;
-                            if (alphaBlendSelectTargetB(scanline, &targetB, oam->priority, 0, global_x, false))
+                            if (alphaBlendSelectTargetB(scanline, &targetB, oam->priority, 0, buf_x, false))
                             {
                                 color = alphaBlendColor(targetA, targetB);
                             }
@@ -661,7 +691,7 @@ static void DrawSprites(struct scanlineData* scanline, uint16_t vcount, bool win
                         }
                         
                         //write pixel to pixel framebuffer
-                        pixels[global_x] = color | (1 << 15);
+                        pixels[buf_x] = color | (1 << 15);
                     }
                 }
             }
@@ -791,13 +821,16 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
     //draw to pixel mask
     if (windowsEnabled)
     {
-        for (xpos = 0; xpos < DISPLAY_WIDTH; xpos++)
+        for (xpos = 0; xpos < gRenderWidth; xpos++)
         {
+            // Window bounds are register values in GBA screen space, so test
+            // them against the game-space column rather than the buffer index.
+            int gx = xpos - gRenderMargin;
             //win0 checks
-            if (WIN0enable && winCheckHorizontalBounds(WIN0left, WIN0right, xpos))
+            if (WIN0enable && winCheckHorizontalBounds(WIN0left, WIN0right, gx))
                 scanline.winMask[xpos] = REG_WININ & 0x3F;
             //win1 checks
-            else if (WIN1enable && winCheckHorizontalBounds(WIN1left, WIN1right, xpos))
+            else if (WIN1enable && winCheckHorizontalBounds(WIN1left, WIN1right, gx))
                 scanline.winMask[xpos] = (REG_WININ >> 8) & 0x3F;
             else
                 scanline.winMask[xpos] = (REG_WINOUT & 0x3F) | WINMASK_WINOUT;
@@ -817,8 +850,8 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
             if (isbgEnabled(bgnum))
             {
                 uint16_t *src = scanline.layers[bgnum];
-                //copy all pixels to framebuffer 
-                for (xpos = 0; xpos < DISPLAY_WIDTH; xpos++)
+                //copy all pixels to framebuffer
+                for (xpos = 0; xpos < gRenderWidth; xpos++)
                 {
                     uint16_t color = src[xpos];
                     bool winEffectEnable = true;
@@ -866,7 +899,7 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
         }
         //draw sprites on current priority
         uint16_t *src = scanline.spriteLayers[prnum];
-        for (xpos = 0; xpos < DISPLAY_WIDTH; xpos++)
+        for (xpos = 0; xpos < gRenderWidth; xpos++)
         {
             if (getAlphaBit(src[xpos]))
             {
@@ -923,8 +956,8 @@ void DrawFrame(uint16_t *pixels)
             }
         }
 
-        memsetu16(&pixels[i * DISPLAY_WIDTH], backdropColor, DISPLAY_WIDTH);
-        DrawScanline(&pixels[i * DISPLAY_WIDTH], i);
+        memsetu16(&pixels[i * gRenderWidth], backdropColor, gRenderWidth);
+        DrawScanline(&pixels[i * gRenderWidth], i);
         
         REG_DISPSTAT |= INTR_FLAG_HBLANK;
 
