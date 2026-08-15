@@ -1525,10 +1525,11 @@ JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_n
     if (pixels == NULL)
         return NULL;
 
-    // The bottom four tile rows are the message strip: the CANCEL button
-    // well and message-box frame live in the tilemap there, but the tab
-    // offers neither. Stamp the strip with the layer's filler tile (the
-    // most frequent map entry) so only the staircase area keeps furniture.
+    // The layer carries furniture the tab doesn't offer: the message strip
+    // (bottom four tile rows, with the CANCEL button well) and the darker
+    // frame band along the top row and left two columns. Stamp both with
+    // the layer's filler tile (the most frequent map entry) so only the
+    // staircase area keeps furniture.
     {
         u16 best = sTilemap[0];
         int bestCount = 0;
@@ -1550,6 +1551,14 @@ JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_n
         for (ty = 16; ty < 20; ty++)
         for (tx = 0; tx < 30; tx++)
             sTilemap[ty * 32 + tx] = best;
+        for (ty = 0; ty < 20; ty++)
+        {
+            sTilemap[ty * 32 + 0] = best;
+            sTilemap[ty * 32 + 1] = best;
+        }
+        for (tx = 0; tx < 30; tx++)
+            sTilemap[0 * 32 + tx] = best;
+        sTilemap[1 * 32 + 2] = best; // the frame's rounded corner tile
     }
 
     for (ty = 0; ty < 20; ty++)
