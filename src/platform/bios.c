@@ -202,11 +202,20 @@ void LZ77UnCompWram(const u32 *src, void *dst)
 {
     const uint8_t *source = (const uint8_t *)src;
     uint8_t *dest = (uint8_t *)dst;
+    uint32_t header;
+    int len;
 
-    uint32_t header = CPUReadMemory(source);
+    if (src == NULL || dst == NULL)
+        return;
+
+    header = CPUReadMemory(source);
     source += 4;
 
-    int len = header >> 8;
+    len = header >> 8;
+    // Hole-fill misses and zeroed .rodata produce garbage headers. The GBA
+    // BIOS still wrote into WRAM; here a 16MB len smashes the native heap.
+    if (len <= 0 || len > 0x40000)
+        return;
 
     while (len > 0) {
         uint8_t d = CPUReadByte(source++);

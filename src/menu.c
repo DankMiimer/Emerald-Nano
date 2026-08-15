@@ -1824,10 +1824,16 @@ void *malloc_and_decompress(const void *src, u32 *size)
     u8 *sizeAsBytes = (u8 *)size;
     u8 *srcAsBytes = (u8 *)src;
 
+    if (src == NULL || size == NULL)
+        return NULL;
+
     sizeAsBytes[0] = srcAsBytes[1];
     sizeAsBytes[1] = srcAsBytes[2];
     sizeAsBytes[2] = srcAsBytes[3];
     sizeAsBytes[3] = 0;
+
+    if (*size == 0 || *size > 0x40000)
+        return NULL;
 
     ptr = Alloc(*size);
     if (ptr)

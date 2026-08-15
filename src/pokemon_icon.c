@@ -1028,18 +1028,20 @@ static const u16 sSpriteImageSizes[3][4] =
 u8 CreateMonIcon(u16 species, void (*callback)(struct Sprite *), s16 x, s16 y, u8 subpriority, u32 personality, bool32 handleDeoxys)
 {
     u8 spriteId;
-    struct MonIconSpriteTemplate iconTemplate =
-    {
-        .oam = &sMonIconOamData,
-        .image = GetMonIconPtr(species, personality, handleDeoxys),
-        .anims = sMonIconAnims,
-        .affineAnims = sMonIconAffineAnims,
-        .callback = callback,
-        .paletteTag = POKE_ICON_BASE_PAL_TAG + gMonIconPaletteIndices[species],
-    };
+    struct MonIconSpriteTemplate iconTemplate;
 
-    if (species > NUM_SPECIES)
-        iconTemplate.paletteTag = POKE_ICON_BASE_PAL_TAG;
+    // Palette lookup used to run in the initializer *before* the NUM_SPECIES
+    // guard. On GBA that read wrapped ROM; on the native port it SIGSEGVs.
+    // Battle Dome opponent cards hit this when a facility mon id is stale.
+    if (species >= ARRAY_COUNT(gMonIconPaletteIndices))
+        species = SPECIES_NONE;
+
+    iconTemplate.oam = &sMonIconOamData;
+    iconTemplate.image = GetMonIconPtr(species, personality, handleDeoxys);
+    iconTemplate.anims = sMonIconAnims;
+    iconTemplate.affineAnims = sMonIconAffineAnims;
+    iconTemplate.callback = callback;
+    iconTemplate.paletteTag = POKE_ICON_BASE_PAL_TAG + gMonIconPaletteIndices[species];
 
     spriteId = CreateMonIconSprite(&iconTemplate, x, y, subpriority);
 
@@ -1051,15 +1053,17 @@ u8 CreateMonIcon(u16 species, void (*callback)(struct Sprite *), s16 x, s16 y, u
 u8 CreateMonIconNoPersonality(u16 species, void (*callback)(struct Sprite *), s16 x, s16 y, u8 subpriority, bool32 handleDeoxys)
 {
     u8 spriteId;
-    struct MonIconSpriteTemplate iconTemplate =
-    {
-        .oam = &sMonIconOamData,
-        .image = NULL,
-        .anims = sMonIconAnims,
-        .affineAnims = sMonIconAffineAnims,
-        .callback = callback,
-        .paletteTag = POKE_ICON_BASE_PAL_TAG + gMonIconPaletteIndices[species],
-    };
+    struct MonIconSpriteTemplate iconTemplate;
+
+    if (species >= ARRAY_COUNT(gMonIconPaletteIndices))
+        species = SPECIES_NONE;
+
+    iconTemplate.oam = &sMonIconOamData;
+    iconTemplate.image = NULL;
+    iconTemplate.anims = sMonIconAnims;
+    iconTemplate.affineAnims = sMonIconAffineAnims;
+    iconTemplate.callback = callback;
+    iconTemplate.paletteTag = POKE_ICON_BASE_PAL_TAG + gMonIconPaletteIndices[species];
 
     iconTemplate.image = GetMonIconTiles(species, handleDeoxys);
     spriteId = CreateMonIconSprite(&iconTemplate, x, y, subpriority);
@@ -1187,7 +1191,11 @@ void SpriteCB_MonIcon(struct Sprite *sprite)
 
 const u8 *GetMonIconTiles(u16 species, bool32 handleDeoxys)
 {
-    const u8 *iconSprite = gMonIconTable[species];
+    const u8 *iconSprite;
+
+    if (species >= ARRAY_COUNT(gMonIconTable))
+        species = SPECIES_NONE;
+    iconSprite = gMonIconTable[species];
     if (species == SPECIES_DEOXYS && handleDeoxys == TRUE)
     {
         iconSprite = (const u8 *)(0x400 + (u32)iconSprite); // use the specific Deoxys form icon (Speed in this case)

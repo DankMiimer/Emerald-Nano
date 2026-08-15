@@ -38,6 +38,8 @@
 #include "constants/abilities.h"
 #include "constants/songs.h"
 #include "constants/battle_frontier.h"
+#include "constants/battle_frontier_mons.h"
+#include "constants/pokemon.h"
 #include "constants/rgb.h"
 
 #define TAG_BUTTONS 0
@@ -3009,7 +3011,11 @@ static void SetDomeOpponentId(void)
 // While not an issue in-game, this will overflow if called after the player's opponent for the current round has been eliminated
 static u16 TrainerIdOfPlayerOpponent(void)
 {
-    return DOME_TRAINERS[TournamentIdOfOpponent(gSaveBlock2Ptr->frontier.curChallengeBattleNum, TRAINER_PLAYER)].trainerId;
+    u8 tournamentId = TournamentIdOfOpponent(gSaveBlock2Ptr->frontier.curChallengeBattleNum, TRAINER_PLAYER);
+
+    if (tournamentId >= DOME_TOURNAMENT_TRAINERS_COUNT)
+        return TRAINER_PLAYER;
+    return DOME_TRAINERS[tournamentId].trainerId;
 }
 
 static void SetDomeOpponentGraphicsId(void)
@@ -4313,6 +4319,43 @@ static u8 Task_GetInfoCardInput(u8 taskId)
 // allocatedArray below needs to be large enough to hold stat totals for each mon, or totals of each type of move points
 #define ALLOC_ARRAY_SIZE max(NUM_STATS * FRONTIER_PARTY_SIZE, NUM_MOVE_POINT_TYPES)
 
+static u16 GetDomeCardSpecies(u16 trainerId, u8 trainerTourneyId, int slot)
+{
+    u16 monId = DOME_MONS[trainerTourneyId][slot];
+    u16 species;
+
+    if (trainerId == TRAINER_PLAYER || trainerId == TRAINER_FRONTIER_BRAIN)
+        species = monId;
+    else if (monId < NUM_FRONTIER_MONS)
+        species = gFacilityTrainerMons[monId].species;
+    else
+        return SPECIES_NONE;
+    if (species >= NUM_SPECIES)
+        return SPECIES_NONE;
+    return species;
+}
+
+static u16 GetDomeCardMove(u16 trainerId, u8 trainerTourneyId, int slot, int moveSlot)
+{
+    u16 monId;
+    u16 move;
+
+    if (trainerId == TRAINER_FRONTIER_BRAIN)
+        move = GetFrontierBrainMonMove(slot, moveSlot);
+    else if (trainerId == TRAINER_PLAYER)
+        move = gSaveBlock2Ptr->frontier.domePlayerPartyData[slot].moves[moveSlot];
+    else
+    {
+        monId = DOME_MONS[trainerTourneyId][slot];
+        if (monId >= NUM_FRONTIER_MONS)
+            return MOVE_NONE;
+        move = gFacilityTrainerMons[monId].moves[moveSlot];
+    }
+    if (move >= MOVES_COUNT)
+        return MOVE_NONE;
+    return move;
+}
+
 static void DisplayTrainerInfoOnCard(u8 flags, u8 trainerTourneyId)
 {
     struct TextPrinterTemplate textPrinter;
@@ -4324,6 +4367,10 @@ static void DisplayTrainerInfoOnCard(u8 flags, u8 trainerTourneyId)
     int x = 0, y = 0;
     u8 palSlot = 0;
     s16 *allocatedArray = AllocZeroed(sizeof(s16) * ALLOC_ARRAY_SIZE);
+
+    SetFacilityPtrsGetLevel();
+    if (trainerTourneyId >= DOME_TOURNAMENT_TRAINERS_COUNT)
+        trainerTourneyId = 0;
     trainerId = DOME_TRAINERS[trainerTourneyId].trainerId;
 
     if (flags & CARD_ALTERNATE_SLOT)
@@ -4345,39 +4392,18 @@ static void DisplayTrainerInfoOnCard(u8 flags, u8 trainerTourneyId)
     else
         sInfoCard->spriteIds[arrId] = CreateTrainerPicSprite(GetFrontierTrainerFrontSpriteId(trainerId), TRUE, x + 48, y + 64, palSlot + 12, TAG_NONE);
 
-    if (flags & MOVE_CARD)
+    if (flags & MOVE_CARD && sInfoCard->spriteIds[arrId] < MAX_SPRITES)
         gSprites[sInfoCard->spriteIds[arrId]].invisible = TRUE;
 
     // Create party mon icons
     for (i = 0; i < FRONTIER_PARTY_SIZE; i++)
     {
-        if (trainerId == TRAINER_PLAYER)
-        {
-            sInfoCard->spriteIds[2 + i + arrId] = CreateMonIcon(DOME_MONS[trainerTourneyId][i],
-                                                                  SpriteCB_MonIconDomeInfo,
-                                                                  x | sInfoTrainerMonX[i],
-                                                                  y + sInfoTrainerMonY[i],
-                                                                  0, 0, TRUE);
-            gSprites[sInfoCard->spriteIds[2 + i + arrId]].oam.priority = 0;
-        }
-        else if (trainerId == TRAINER_FRONTIER_BRAIN)
-        {
-            sInfoCard->spriteIds[2 + i + arrId] = CreateMonIcon(DOME_MONS[trainerTourneyId][i],
-                                                                  SpriteCB_MonIconDomeInfo,
-                                                                  x | sInfoTrainerMonX[i],
-                                                                  y + sInfoTrainerMonY[i],
-                                                                  0, 0, TRUE);
-            gSprites[sInfoCard->spriteIds[2 + i + arrId]].oam.priority = 0;
-        }
-        else
-        {
-            sInfoCard->spriteIds[2 + i + arrId] = CreateMonIcon(gFacilityTrainerMons[DOME_MONS[trainerTourneyId][i]].species,
-                                                                  SpriteCB_MonIconDomeInfo,
-                                                                  x | sInfoTrainerMonX[i],
-                                                                  y + sInfoTrainerMonY[i],
-                                                                  0, 0, TRUE);
-            gSprites[sInfoCard->spriteIds[2 + i + arrId]].oam.priority = 0;
-        }
+        sInfoCard->spriteIds[2 + i + arrId] = CreateMonIcon(GetDomeCardSpecies(trainerId, trainerTourneyId, i),
+                                                              SpriteCB_MonIconDomeInfo,
+                                                              x | sInfoTrainerMonX[i],
+                                                              y + sInfoTrainerMonY[i],
+                                                              0, 0, TRUE);
+        gSprites[sInfoCard->spriteIds[2 + i + arrId]].oam.priority = 0;
 
         if (flags & MOVE_CARD)
             gSprites[sInfoCard->spriteIds[2 + i + arrId]].invisible = TRUE;
@@ -4405,7 +4431,11 @@ static void DisplayTrainerInfoOnCard(u8 flags, u8 trainerTourneyId)
     else
         j = GetFrontierOpponentClass(trainerId);
 
-    for (;gTrainerClassNames[j][i] != EOS; i++)
+    // gTrainerClassNames is extern with an incomplete outer bound, so the
+    // last class constant stands in for ARRAY_COUNT here.
+    if (j > TRAINER_CLASS_RS_PROTAG)
+        j = TRAINER_CLASS_PKMN_TRAINER_1;
+    for (; i < 12 && gTrainerClassNames[j][i] != EOS; i++)
         gStringVar1[i] = gTrainerClassNames[j][i];
     gStringVar1[i] = CHAR_SPACE;
     gStringVar1[i + 1] = EOS;
@@ -4438,12 +4468,7 @@ static void DisplayTrainerInfoOnCard(u8 flags, u8 trainerTourneyId)
     for (i = 0; i < FRONTIER_PARTY_SIZE; i++)
     {
         textPrinter.currentY = sSpeciesNameTextYCoords[i];
-        if (trainerId == TRAINER_PLAYER)
-            textPrinter.currentChar = gSpeciesNames[DOME_MONS[trainerTourneyId][i]];
-        else if (trainerId == TRAINER_FRONTIER_BRAIN)
-            textPrinter.currentChar = gSpeciesNames[DOME_MONS[trainerTourneyId][i]];
-        else
-            textPrinter.currentChar = gSpeciesNames[gFacilityTrainerMons[DOME_MONS[trainerTourneyId][i]].species];
+        textPrinter.currentChar = gSpeciesNames[GetDomeCardSpecies(trainerId, trainerTourneyId, i)];
 
         textPrinter.windowId = WIN_TRAINER_MON1_NAME + i + windowId;
         if (i == 1)
@@ -4479,12 +4504,7 @@ static void DisplayTrainerInfoOnCard(u8 flags, u8 trainerTourneyId)
         {
             for (k = 0; k < NUM_MOVE_POINT_TYPES; k++)
             {
-                if (trainerId == TRAINER_FRONTIER_BRAIN)
-                    allocatedArray[k] += sBattleStyleMovePoints[GetFrontierBrainMonMove(i, j)][k];
-                else if (trainerId == TRAINER_PLAYER)
-                    allocatedArray[k] += sBattleStyleMovePoints[gSaveBlock2Ptr->frontier.domePlayerPartyData[i].moves[j]][k];
-                else
-                    allocatedArray[k] += sBattleStyleMovePoints[gFacilityTrainerMons[DOME_MONS[trainerTourneyId][i]].moves[j]][k];
+                allocatedArray[k] += sBattleStyleMovePoints[GetDomeCardMove(trainerId, trainerTourneyId, i, j)][k];
             }
         }
     }
@@ -4560,6 +4580,8 @@ static void DisplayTrainerInfoOnCard(u8 flags, u8 trainerTourneyId)
         }
         for (j = 0, i = 0; i < NUM_STATS; i++)
             j += allocatedArray[NUM_STATS + i];
+        if (j == 0)
+            j = 1;
         for (i = 0; i < NUM_STATS; i++)
             allocatedArray[i] = (allocatedArray[NUM_STATS + i] * 100) / j;
     }
@@ -4568,7 +4590,12 @@ static void DisplayTrainerInfoOnCard(u8 flags, u8 trainerTourneyId)
     {
         for (i = 0; i < FRONTIER_PARTY_SIZE; i++)
         {
-            int evBits = gFacilityTrainerMons[DOME_MONS[trainerTourneyId][i]].evSpread;
+            int evBits;
+            u16 monId = DOME_MONS[trainerTourneyId][i];
+
+            if (monId >= NUM_FRONTIER_MONS)
+                continue;
+            evBits = gFacilityTrainerMons[monId].evSpread;
             for (k = 0, j = 0; j < NUM_STATS; j++)
             {
                 allocatedArray[j] = 0;
@@ -4576,8 +4603,10 @@ static void DisplayTrainerInfoOnCard(u8 flags, u8 trainerTourneyId)
                     k++;
                 evBits >>= 1;
             }
+            if (k == 0)
+                k = 1;
             k = MAX_TOTAL_EVS / k;
-            evBits = gFacilityTrainerMons[DOME_MONS[trainerTourneyId][i]].evSpread;
+            evBits = gFacilityTrainerMons[monId].evSpread;
             for (j = 0; j < NUM_STATS; j++)
             {
                 if (evBits & 1)
@@ -4588,7 +4617,9 @@ static void DisplayTrainerInfoOnCard(u8 flags, u8 trainerTourneyId)
             allocatedArray[NUM_STATS] += allocatedArray[STAT_HP];
             for (j = 0; j < NUM_NATURE_STATS; j++)
             {
-                nature = gFacilityTrainerMons[DOME_MONS[trainerTourneyId][i]].nature;
+                nature = gFacilityTrainerMons[monId].nature;
+                if (nature >= NUM_NATURES)
+                    nature = NATURE_HARDY;
                 if (gNatureStatTable[nature][j] > 0)
                 {
                     allocatedArray[j + NUM_STATS + 1] += (allocatedArray[j + 1] * 110) / 100;
@@ -4606,6 +4637,8 @@ static void DisplayTrainerInfoOnCard(u8 flags, u8 trainerTourneyId)
         }
         for (j = 0, i = 0; i < NUM_STATS; i++)
             j += allocatedArray[i + NUM_STATS];
+        if (j == 0)
+            j = 1;
         for (i = 0; i < NUM_STATS; i++)
             allocatedArray[i] = (allocatedArray[NUM_STATS + i] * 100) / j;
     }
