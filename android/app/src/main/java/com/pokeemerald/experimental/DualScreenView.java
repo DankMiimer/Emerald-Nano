@@ -1069,13 +1069,13 @@ public final class DualScreenView extends View {
             drawSlotChrome(canvas, slot, kind, pal);
             if (!present || f == null) continue;
 
-            // Content at the lead slot's sprite anchors (the icon anchor
-            // sits 8px left of the slot origin in the game's layout).
-            // X anchors scale by sx with the card; sprites stay square.
+            // Content at the lead slot's anchors, kept inside the card
+            // (the staircase let the icon hang over the slot edge; here it
+            // sits flush). X anchors scale by sx; sprites stay square.
             Bitmap icon = mon.isEgg ? null : monIcon(mon.species);
             if (icon != null) {
                 canvas.drawBitmap(icon, null,
-                        new RectF(wx - 8 * sy, wy, wx + 24 * sy, wy + 32 * sy), pixelPaint);
+                        new RectF(wx + 2 * sy, wy + 2 * sy, wx + 34 * sy, wy + 34 * sy), pixelPaint);
             }
             if (!mon.isEgg && mon.item > 0) {
                 // Mail items get the game's mail mark (ITEM_ORANGE_MAIL..ITEM_RETRO_MAIL).
@@ -1123,9 +1123,10 @@ public final class DualScreenView extends View {
             paint.setColor(PARTY_HP_BODY[level]);
             canvas.drawRect(barX, barY + sy, barX + fillPx * sx, barY + 3 * sy, paint);
 
+            // Right-aligned to the groove's end so it stays inside the card.
             String hpText = mon.hp + "/" + mon.maxHp;
-            float hpRight = wx + 77 * sx;
-            f.draw(canvas, hpText, hpRight - f.measure(hpText, subScale), wy + 37 * sy,
+            float hpRight = wx + 72 * sx;
+            f.draw(canvas, hpText, hpRight - f.measure(hpText, subScale), wy + 40 * sy,
                     subScale, PARTY_TEXT, PARTY_TEXT_SHADOW);
         }
     }
