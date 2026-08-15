@@ -1488,7 +1488,16 @@ JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_n
     LZ77UnCompWram(gPartyMenuBg_Gfx, sGfx);
     LZ77UnCompWram(gPartyMenuBg_Pal, sPal);
     memcpy(bank, &sPal[3 * 16], sizeof(bank));
-    if (fainted)
+    if (kind == 4)
+    {
+        // DrawEmptySlot remaps entries 1/11/12 from bank 1
+        // (sPartyBoxNoMonPalIds/Offsets); without it the empty slot picks
+        // up bank 3's unused colors and renders purple.
+        bank[1] = sPal[1 * 16 + 1];
+        bank[11] = sPal[1 * 16 + 11];
+        bank[12] = sPal[1 * 16 + 12];
+    }
+    else if (fainted)
     {
         bank[1] = sPal[5 * 16 + 1];
         for (i = 4; i <= 8; i++)
