@@ -260,16 +260,19 @@ public final class DualScreenView extends View {
         return desc;
     }
 
-    /** A party slot box bitmap; kinds as in nativeGetPartySlot. */
-    private Bitmap partySlot(int kind, boolean fainted) {
-        int key = kind * 2 + (fainted ? 1 : 0);
+    /**
+     * A party slot box bitmap; kinds as in nativeGetPartySlot. pal selects
+     * the palette: 0 normal, 1 fainted/dimmed, 2 the no-mon (empty) remap.
+     */
+    private Bitmap partySlot(int kind, int pal) {
+        int key = kind * 4 + pal;
         Bitmap cached = partySlotCache.get(key);
         if (cached != null) {
             return cached;
         }
         int w = kind <= 1 ? 80 : 144;
         int h = kind <= 1 ? 56 : 24;
-        int[] pixels = DualScreenBridge.nativeGetPartySlot(kind, fainted ? 1 : 0);
+        int[] pixels = DualScreenBridge.nativeGetPartySlot(kind, pal);
         if (pixels == null || pixels.length != w * h) {
             return null;
         }
@@ -279,17 +282,20 @@ public final class DualScreenView extends View {
     }
 
     /**
-     * The box behind a party staircase slot: the game's own tile art, with
-     * a flat rounded card as fallback when the tile art is unavailable.
-     * Dimmed covers both fainted and untappable slots.
+     * The box behind a party slot: the game's own tile art, with a flat
+     * rounded card as fallback when the tile art is unavailable. pal 1
+     * covers both fainted and untappable slots, pal 2 the empty ones.
      */
-    private void drawSlotChrome(Canvas canvas, RectF slot, int kind, boolean dimmed) {
-        Bitmap slotGfx = partySlot(kind, dimmed);
+    private void drawSlotChrome(Canvas canvas, RectF slot, int kind, int pal) {
+        Bitmap slotGfx = partySlot(kind, pal);
         if (slotGfx != null) {
+            // Empty bays fade back so occupied cards carry the screen.
+            if (pal == 2) pixelPaint.setAlpha(110);
             canvas.drawBitmap(slotGfx, null, slot, pixelPaint);
+            pixelPaint.setAlpha(255);
             return;
         }
-        paint.setColor(kind == 4 ? 0x50FFFFFF : dimmed ? 0xFF8894A0 : SUMMARY_BLUE);
+        paint.setColor(kind == 4 || pal == 2 ? 0x50FFFFFF : pal == 1 ? 0xFF8894A0 : SUMMARY_BLUE);
         canvas.drawRoundRect(slot, 10, 10, paint);
     }
 
@@ -1034,86 +1040,92 @@ public final class DualScreenView extends View {
         GbaFont f = font();
         float contentHeight = getHeight() - tabBarHeight();
         drawPartyBackdrop(canvas, contentHeight);
-        int s = (int) Math.min(getWidth() / 240f, contentHeight / 160f);
-        if (s < 1) s = 1;
-        float ox = (getWidth() - 240f * s) / 2f;
-        float oy = (contentHeight - 160f * s) / 2f;
-        float nameScale = s * 0.8f;
-        float subScale = s * 0.65f;
+        // Six rich main-slot cards in a 2x3 grid: the GBA staircase wastes
+        // most of this panel, so every mon gets the lead slot's treatment,
+        // scaled to fill the content area. The slot art is flat fills and
+        // borders, so it takes a horizontal stretch (sx > sy) invisibly;
+        // sprites and text keep square pixels at sy.
+        float pad = 16;
+        int sy = (int) ((contentHeight - 4 * pad) / (3 * 56f));
+        if (sy < 1) sy = 1;
+        int sx = (int) ((getWidth() - 3 * pad) / (2 * 80f));
+        if (sx < sy) sx = sy;
+        float cw = 80 * sx, ch = 56 * sy;
+        float gx = (getWidth() - 2 * cw) / 3f;
+        float gy = (contentHeight - 3 * ch) / 4f;
+        float nameScale = sy * 0.8f;
+        float subScale = sy * 0.65f;
 
         for (int i = 0; i < 6; i++) {
             boolean present = i < state.party.size();
             DualScreenState.Mon mon = present ? state.party.get(i) : null;
-            boolean lead = i == 0;
             boolean fainted = present && !mon.isEgg && mon.hp == 0;
-            int kind = !present ? 4 : lead ? (mon.isEgg ? 1 : 0) : (mon.isEgg ? 3 : 2);
-            float wx = ox + (lead ? 8 : 96) * s;
-            float wy = oy + (lead ? 24 : 8 + 24 * (i - 1)) * s;
-            RectF slot = new RectF(wx, wy, wx + (lead ? 80 : 144) * s, wy + (lead ? 56 : 24) * s);
+            int kind = present && !mon.isEgg ? 0 : 1;
+            int pal = !present ? 2 : fainted ? 1 : 0;
+            float wx = gx + (i % 2) * (cw + gx);
+            float wy = gy + (i / 2) * (ch + gy);
+            RectF slot = new RectF(wx, wy, wx + cw, wy + ch);
             partyCards[i].set(slot);
-            drawSlotChrome(canvas, slot, kind, fainted);
+            drawSlotChrome(canvas, slot, kind, pal);
             if (!present || f == null) continue;
 
-            // Mon icon and held-item mark, at the game's sprite anchors.
+            // Content at the lead slot's sprite anchors (the icon anchor
+            // sits 8px left of the slot origin in the game's layout).
+            // X anchors scale by sx with the card; sprites stay square.
             Bitmap icon = mon.isEgg ? null : monIcon(mon.species);
-            float ix = lead ? ox : wx - 8 * s;
-            float iy = lead ? wy : wy - 6 * s;
             if (icon != null) {
-                canvas.drawBitmap(icon, null, new RectF(ix, iy, ix + 32 * s, iy + 32 * s), pixelPaint);
+                canvas.drawBitmap(icon, null,
+                        new RectF(wx - 8 * sy, wy, wx + 24 * sy, wy + 32 * sy), pixelPaint);
             }
             if (!mon.isEgg && mon.item > 0) {
                 // Mail items get the game's mail mark (ITEM_ORANGE_MAIL..ITEM_RETRO_MAIL).
                 Bitmap mark = holdIcon(mon.item >= 121 && mon.item <= 132 ? 1 : 0);
-                float hx = lead ? ox + 16 * s : wx + 8 * s;
-                float hy = lead ? wy + 22 * s : wy + 16 * s;
                 if (mark != null) {
-                    canvas.drawBitmap(mark, null, new RectF(hx, hy, hx + 8 * s, hy + 8 * s), pixelPaint);
+                    canvas.drawBitmap(mark, null,
+                            new RectF(wx + 8 * sy, wy + 22 * sy, wx + 16 * sy, wy + 30 * sy), pixelPaint);
                 }
             }
 
             String title = mon.isEgg ? "EGG" : mon.nick;
-            float nickX = wx + (lead ? 24 : 22) * s;
-            float nickY = wy + (lead ? 11 : 3) * s;
-            f.draw(canvas, title, nickX, nickY, nameScale, PARTY_TEXT, PARTY_TEXT_SHADOW);
+            f.draw(canvas, title, wx + 24 * sx, wy + 11 * sy, nameScale, PARTY_TEXT, PARTY_TEXT_SHADOW);
             if (mon.isEgg) continue;
 
             // Level and gender give way to the status tag, like in the game.
-            float subY = wy + (lead ? 20 : 12) * s;
+            float subY = wy + 20 * sy;
             int statusIdx = statusIconIndex(mon.status, mon.hp);
             if (statusIdx < 0) {
-                f.draw(canvas, "Lv" + mon.level, wx + (lead ? 32 : 30) * s, subY,
+                f.draw(canvas, "Lv" + mon.level, wx + 32 * sx, subY,
                         subScale, PARTY_TEXT, PARTY_TEXT_SHADOW);
                 if (mon.gender == 0) {
-                    f.draw(canvas, "♂", wx + (lead ? 64 : 62) * s, subY,
+                    f.draw(canvas, "♂", wx + 64 * sx, subY,
                             subScale, PARTY_MALE, PARTY_MALE_SHADOW);
                 } else if (mon.gender == 1) {
-                    f.draw(canvas, "♀", wx + (lead ? 64 : 62) * s, subY,
+                    f.draw(canvas, "♀", wx + 64 * sx, subY,
                             subScale, PARTY_FEMALE, PARTY_FEMALE_SHADOW);
                 }
             } else {
                 Bitmap tag = statusIcon(statusIdx);
-                float tx = lead ? ox + 34 * s : wx + 24 * s;
-                float ty = lead ? wy + 24 * s : wy + 15 * s;
                 if (tag != null) {
-                    canvas.drawBitmap(tag, null, new RectF(tx, ty, tx + 32 * s, ty + 8 * s), pixelPaint);
+                    canvas.drawBitmap(tag, null,
+                            new RectF(wx + 26 * sx, wy + 24 * sy, wx + 26 * sx + 32 * sy, wy + 32 * sy), pixelPaint);
                 }
             }
 
-            // HP bar fill over the groove baked into the slot graphic.
-            float barX = wx + (lead ? 24 : 88) * s;
-            float barY = wy + (lead ? 35 : 10) * s;
+            // HP bar fill over the groove baked into the slot graphic; the
+            // groove stretches with the card, so the fill scales by sx.
+            float barX = wx + 24 * sx;
+            float barY = wy + 35 * sy;
             float fillPx = mon.maxHp > 0 ? 48f * mon.hp / mon.maxHp : 0;
             if (mon.hp > 0 && fillPx < 1) fillPx = 1;
             int level = hpBarLevel(mon.hp, mon.maxHp);
             paint.setColor(PARTY_HP_TOP[level]);
-            canvas.drawRect(barX, barY, barX + fillPx * s, barY + s, paint);
+            canvas.drawRect(barX, barY, barX + fillPx * sx, barY + sy, paint);
             paint.setColor(PARTY_HP_BODY[level]);
-            canvas.drawRect(barX, barY + s, barX + fillPx * s, barY + 3 * s, paint);
+            canvas.drawRect(barX, barY + sy, barX + fillPx * sx, barY + 3 * sy, paint);
 
             String hpText = mon.hp + "/" + mon.maxHp;
-            float hpRight = wx + (lead ? 77 : 141) * s;
-            float hpY = wy + (lead ? 37 : 12) * s;
-            f.draw(canvas, hpText, hpRight - f.measure(hpText, subScale), hpY,
+            float hpRight = wx + 77 * sx;
+            f.draw(canvas, hpText, hpRight - f.measure(hpText, subScale), wy + 37 * sy,
                     subScale, PARTY_TEXT, PARTY_TEXT_SHADOW);
         }
     }
@@ -1830,7 +1842,7 @@ public final class DualScreenView extends View {
             float wy = oy + (lead ? 24 : 8 + 24 * (i - 1)) * s;
             RectF slot = new RectF(wx, wy, wx + (lead ? 80 : 144) * s, wy + (lead ? 56 : 24) * s);
             battlePartyCards[i].set(slot);
-            drawSlotChrome(canvas, slot, kind, present && (fainted || !enabled));
+            drawSlotChrome(canvas, slot, kind, present && (fainted || !enabled) ? 1 : 0);
             if (!present || f == null) continue;
 
             Bitmap icon = mon.isEgg ? null : monIcon(mon.species);
