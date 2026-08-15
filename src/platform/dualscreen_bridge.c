@@ -592,13 +592,19 @@ static int MoveEffClass(u16 move, const struct BattlePokemon *def)
         if (def->types[1] != def->types[0] && TYPE_EFFECT_DEF_TYPE(i) == def->types[1])
             mul = mul * TYPE_EFFECT_MULTIPLIER(i) / 10;
     }
+    // Multiplier tiers, so the UI can split 2x from 4x (and 1/2 from 1/4):
+    // 0 immune, 1 quarter, 2 half, 3 neutral, 4 double, 5 quad.
     if (mul == 0)
         return 0;
-    if (mul < TYPE_MUL_NORMAL)
+    if (mul < 5)
         return 1;
-    if (mul == TYPE_MUL_NORMAL)
+    if (mul < TYPE_MUL_NORMAL)
         return 2;
-    return 3;
+    if (mul == TYPE_MUL_NORMAL)
+        return 3;
+    if (mul <= 20)
+        return 4;
+    return 5;
 }
 
 // foes: up to two current opposing battlers ([0] left, [1] right; NULL when

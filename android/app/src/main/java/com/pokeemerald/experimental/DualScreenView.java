@@ -364,40 +364,51 @@ public final class DualScreenView extends View {
                 new RectF(left, top, left + height * 2, top + height), pixelPaint);
     }
 
+    // A 7x4-unit pixel caret, row bitmaps top to bottom (up orientation).
+    private static final int[][] CHEVRON_ROWS = {
+            {3}, {2, 3, 4}, {1, 2, 4, 5}, {0, 1, 5, 6}};
+    private static final int[][] CROSS_ROWS = {
+            {0, 4}, {1, 3}, {2}, {1, 3}, {0, 4}};
+
+    private void drawPixelRows(Canvas canvas, int[][] rows, boolean flip,
+            float left, float top, float u, int color) {
+        // GBA-style drop shadow first, then the glyph, in unit squares.
+        for (int pass = 0; pass < 2; pass++) {
+            float off = pass == 0 ? u : 0;
+            paint.setColor(pass == 0 ? 0x55101820 : color);
+            for (int ry = 0; ry < rows.length; ry++) {
+                int[] cols = rows[flip ? rows.length - 1 - ry : ry];
+                for (int col : cols) {
+                    canvas.drawRect(left + col * u + off, top + ry * u + off,
+                            left + (col + 1) * u + off, top + (ry + 1) * u + off, paint);
+                }
+            }
+        }
+    }
+
     /**
-     * Effectiveness marker on a move card: up triangle = super effective,
-     * down triangle = not very effective, cross = no effect; nothing for
-     * normal effectiveness or no data. All Canvas shapes on a white chip.
+     * Effectiveness marker on a move card, as GBA-style pixel carets:
+     * one up = effective (2x), two up = super (4x), one down = not very
+     * (1/2x), two down = quarter (1/4x), pixel cross = no effect; nothing
+     * for neutral or no data. eff carries the multiplier tier (see
+     * DualScreenState.Move.eff).
      */
     private void drawEffMarker(Canvas canvas, int eff, float cx, float cy, float r) {
-        if (eff != 0 && eff != 1 && eff != 3) {
+        if (eff < 0 || eff == 3 || eff > 5) {
             return;
         }
-        paint.setColor(PANEL_WHITE);
-        canvas.drawCircle(cx, cy, r * 1.4f, paint);
-        paint.setColor(0x30000000);
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(2);
-        canvas.drawCircle(cx, cy, r * 1.4f, paint);
-        paint.setStyle(Paint.Style.FILL);
+        float u = Math.max(1f, Math.round(r / 2f));
         if (eff == 0) {
-            paint.setColor(0xFF888E96);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(r * 0.5f);
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            canvas.drawLine(cx - r * 0.65f, cy - r * 0.65f, cx + r * 0.65f, cy + r * 0.65f, paint);
-            canvas.drawLine(cx - r * 0.65f, cy + r * 0.65f, cx + r * 0.65f, cy - r * 0.65f, paint);
-            paint.setStrokeCap(Paint.Cap.BUTT);
-            paint.setStyle(Paint.Style.FILL);
-        } else {
-            float dir = eff == 3 ? -1 : 1; // point up for super, down for not-very
-            android.graphics.Path tri = new android.graphics.Path();
-            tri.moveTo(cx, cy + dir * r * 0.9f);
-            tri.lineTo(cx - r * 0.85f, cy - dir * r * 0.65f);
-            tri.lineTo(cx + r * 0.85f, cy - dir * r * 0.65f);
-            tri.close();
-            paint.setColor(eff == 3 ? 0xFFE86828 : 0xFF5888D8);
-            canvas.drawPath(tri, paint);
+            drawPixelRows(canvas, CROSS_ROWS, false, cx - 2.5f * u, cy - 2.5f * u, u, 0xFF888E96);
+            return;
+        }
+        boolean up = eff >= 4;
+        int count = (eff == 5 || eff == 1) ? 2 : 1;
+        int color = up ? 0xFFE86828 : 0xFF5888D8;
+        float totalH = count * 4 * u + (count - 1) * u;
+        float top = cy - totalH / 2f;
+        for (int c = 0; c < count; c++) {
+            drawPixelRows(canvas, CHEVRON_ROWS, !up, cx - 3.5f * u, top + c * 5 * u, u, color);
         }
     }
 
@@ -1451,13 +1462,13 @@ public final class DualScreenView extends View {
                     // doubles (right foe outermost), one in singles. Absent
                     // foes and normal effectiveness draw nothing.
                     float mr = cellH * 0.085f;
-                    float mx = cell.right - inset * 0.6f - mr * 1.4f;
-                    float my = cell.top + inset * 0.6f + mr * 1.4f;
+                    float mx = cell.right - inset * 0.6f - mr * 2.0f;
+                    float my = cell.top + inset * 0.6f + mr * 1.6f;
                     if (!state.battleDouble) {
                         drawEffMarker(canvas, move.eff[0], mx, my, mr);
                     } else {
                         drawEffMarker(canvas, move.eff[1], mx, my, mr);
-                        drawEffMarker(canvas, move.eff[0], mx - mr * 3.2f, my, mr);
+                        drawEffMarker(canvas, move.eff[0], mx - mr * 4.2f, my, mr);
                     }
                 } else {
                     paint.setColor(0x44A88848);

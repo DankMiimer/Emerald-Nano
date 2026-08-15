@@ -23,8 +23,9 @@ public final class DualScreenState {
         public int type;
         public int power;    // 0 = status move (shown as em dash)
         public int accuracy; // 0 = never misses (shown as em dash)
-        // Effectiveness class vs the current foes ([0] left, [1] right):
-        // -1 no hint, 0 no effect, 1 not very, 2 normal, 3 super.
+        // Effectiveness multiplier tier vs the current foes ([0] left,
+        // [1] right): -1 no hint, 0 immune, 1 quarter, 2 half, 3 neutral,
+        // 4 double, 5 quad.
         public final int[] eff = {-1, -1};
     }
 
