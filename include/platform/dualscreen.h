@@ -64,6 +64,11 @@ u32 DualScreen_BattleMenuInfo(u32 *caseId, u32 *battler, u32 *result, u32 *seq);
 u32 DualScreen_TakeBattleChoice(s32 *a, s32 *b);
 // Reports a rejected submission; the wait state stays open.
 void DualScreen_SetBattleMenuResult(u32 result);
+// Whether the bottom screen has fetched a snapshot recently (it polls ~8/s
+// while its Presentation is actually showing). Flows that install a
+// bottom-screen wait with no arming tap (forced send-out) must require this,
+// so a desktop build or a stolen bottom display fails safe to the GBA menu.
+u32 DualScreen_BottomScreenLive(void);
 
 // Implemented in item_use.c: applies one battle-bag item exactly as the GBA
 // bag + party menu would (validate, run the item effect table, consume the

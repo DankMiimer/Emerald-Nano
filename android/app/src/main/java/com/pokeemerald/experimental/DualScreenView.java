@@ -190,9 +190,19 @@ public final class DualScreenView extends View {
             }
         }
         long now = System.currentTimeMillis();
-        if (battlePanel == 0 && state.battleSub != 0 && now - battleCloseMs > 1500) {
-            // The engine is waiting on us but our panel closed (race); reopen.
+        if (battlePanel == 0 && state.battleSub != 0
+                && (now - battleCloseMs > 1500 || battleSendOutWait())) {
+            // The engine is waiting on us but no panel is up: either a
+            // reopen after a race, or a forced send-out (a fainted mon needs
+            // a replacement), which arrives with no arming tap and opens the
+            // party staircase proactively - immediately, so the second
+            // replacement in a doubles double-faint isn't delayed by the
+            // battleCloseMs stamp of the first.
             battlePanel = state.battleSub == 1 ? 1 : 2;
+        } else if (battleSendOutWait() && (battlePanel == 1 || battlePanel == 3)) {
+            // A stale bag panel must never sit on a send-out wait: with
+            // cancel disabled there would be no way out of it.
+            battlePanel = 2;
         } else if (battlePanel != 0 && state.battleSub == 0
                 && (now - battleArmMs > 2500 || now - battleCloseMs < 1500)) {
             // The choice landed, was cancelled, or the takeover never engaged.
@@ -668,8 +678,21 @@ public final class DualScreenView extends View {
         return new RectF(index * w, 0, (index + 1) * w, h);
     }
 
+    /**
+     * Whether the engine is waiting on a forced send-out choice (a fainted
+     * mon needs its replacement, PARTY_ACTION_SEND_OUT). The choice is
+     * mandatory: the panel opens with no arming tap, shows no CANCEL, and
+     * only slots the engine would accept are tappable.
+     */
+    private boolean battleSendOutWait() {
+        return state.battleSub == 2 && state.battleSubCase == 1;
+    }
+
     /** Closes the open panel, cancelling the engine-side wait if it engaged. */
     private void cancelBattlePanel() {
+        if (battleSendOutWait()) {
+            return; // forced send-out: the choice is mandatory, no cancel
+        }
         if (state.battleSub != 0) {
             DualScreenBridge.nativeBattleSubmit(-1, -1);
         } else {
@@ -732,9 +755,13 @@ public final class DualScreenView extends View {
             // any effect" rejection covers the rest (e.g. Revive on healthy).
             return !mon.isEgg;
         }
-        if (state.battleSubCase != 0) {
+        if (state.battleSubCase != 0 && !battleSendOutWait()) {
             return false; // engine says no switch can happen (trapped etc.)
         }
+        // Send-out uses the same eligibility as a switch: alive, not an egg,
+        // not on the field (a fainted battler's own slot fails the hp check),
+        // and not already queued as the other slot's replacement (prevSel,
+        // the doubles double-faint case).
         return !mon.isEgg && mon.hp > 0
                 && i != state.battleActive[0] && i != state.battleActive[1]
                 && i != state.battlePrevSel;
@@ -1770,13 +1797,21 @@ public final class DualScreenView extends View {
         float pad = getWidth() * 0.02f;
         float scale = getWidth() / 440f;
 
+        boolean sendOut = battlePanel == 2 && battleSendOutWait();
         float cancelH = height * 0.085f;
         RectF cancel = new RectF(pad, height - cancelH - pad * 0.4f,
                 getWidth() - pad, height - pad * 0.4f);
-        battleCancel.set(cancel);
-        drawBar(canvas, cancel, false, battlePanel == 3 ? "BACK" : "CANCEL", scale * 0.9f);
-
-        float contentHeight = cancel.top - pad * 0.5f;
+        float contentHeight;
+        if (sendOut) {
+            // Forced send-out is mandatory: no CANCEL bar at all (the rect
+            // stays empty, so taps down there fall through to nothing).
+            battleCancel.setEmpty();
+            contentHeight = height - pad * 0.5f;
+        } else {
+            battleCancel.set(cancel);
+            drawBar(canvas, cancel, false, battlePanel == 3 ? "BACK" : "CANCEL", scale * 0.9f);
+            contentHeight = cancel.top - pad * 0.5f;
+        }
         int s = (int) Math.min(getWidth() / 240f, contentHeight / 160f);
         if (s < 1) s = 1;
         float ox = (getWidth() - 240f * s) / 2f;
@@ -1859,6 +1894,8 @@ public final class DualScreenView extends View {
             String message;
             if (battlePanel == 3) {
                 message = "Use on which POKéMON?";
+            } else if (sendOut) {
+                message = "Send out which POKéMON?";
             } else if (state.battleSubCase == 2) {
                 message = "Can't switch out now!";
             } else if (state.battleSubCase == 4) {

@@ -1648,19 +1648,31 @@ static void DualScreen_WaitForMonChoice(void)
 
     if (monId < 0 || monId >= PARTY_SIZE) // cancel
     {
+        // Forced send-out is a mandatory choice: the GBA party menu refuses
+        // to close on B here too, so the engine's cancel return value
+        // (PARTY_SIZE) must never be emitted for this case. Ignore it and
+        // keep waiting; the bottom screen offers no cancel control anyway.
+        if (caseId == PARTY_ACTION_SEND_OUT)
+            return;
         DualScreen_ClearBattleMenu();
         BtlController_EmitChosenMonReturnValue(B_COMM_TO_ENGINE, PARTY_SIZE, NULL);
         PlayerBufferExecCompleted();
         return;
     }
 
-    if (caseId != PARTY_ACTION_CHOOSE_MON)
+    if (caseId != PARTY_ACTION_CHOOSE_MON && caseId != PARTY_ACTION_SEND_OUT)
     {
         // Trapped or an ability prevents switching: the engine already
         // decided no switch can happen; every pick fails, only cancel works.
         DualScreen_SetBattleMenuResult(DS_BMENU_RESULT_CANT_USE);
         return;
     }
+    // For PARTY_ACTION_SEND_OUT, prevSelectedPartySlot was loaded from the
+    // controller message's slotId byte, which carries the replacement the
+    // OTHER battler already queued (monToSwitchIntoId of the partner,
+    // PARTY_SIZE when none) - so when both battlers faint in doubles, the
+    // check below rejects sending the same mon out for both slots, exactly
+    // like TrySwitchInPokemon's prevSelectedPartySlot check does.
     if (GetMonData(&gPlayerParty[monId], MON_DATA_SPECIES) == 0
      || GetMonData(&gPlayerParty[monId], MON_DATA_IS_EGG)
      || GetMonData(&gPlayerParty[monId], MON_DATA_HP) == 0
@@ -2802,9 +2814,8 @@ static void PlayerHandleChoosePokemon(void)
 #ifdef PLATFORM_SDL2
     // Bottom-screen battle party: when the tap on POKeMON came from the
     // bottom screen, wait for its switch choice instead of opening the GBA
-    // party menu. Only the action-selection cases are taken over; forced
-    // send-out (PARTY_ACTION_SEND_OUT) and item-use party screens keep the
-    // classic flow, as do link/multi battles.
+    // party menu. Only the action-selection cases are taken over here;
+    // item-use party screens keep the classic flow, as do link/multi battles.
     else if (DualScreen_BattleUiActive()
      && !(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_MULTI | BATTLE_TYPE_RECORDED))
      && ((gBattleBufferA[gActiveBattler][1] & 0xF) == PARTY_ACTION_CHOOSE_MON
@@ -2818,6 +2829,29 @@ static void PlayerHandleChoosePokemon(void)
         gBattlerInMenuId = gActiveBattler;
         gBattlerControllerFuncs[gActiveBattler] = DualScreen_WaitForMonChoice;
         DualScreen_SetBattleMenuOpen(2, gBattleBufferA[gActiveBattler][1] & 0xF, gActiveBattler);
+    }
+    // Forced send-out (a fainted mon needs a replacement, or Baton Pass):
+    // no bottom-screen tap precedes this command, so no arming is required.
+    // While the dual-screen battle UI is active and the bottom screen is
+    // provably alive (it polled a snapshot recently), it always owns this
+    // choice: the panel appears proactively down there and the battle never
+    // leaves the top screen. The slotId byte ([2]) is the replacement the
+    // partner already queued, kept in prevSelectedPartySlot so the wait
+    // handler rejects it (doubles double-faint). If the bottom screen is not
+    // live, fall through to the GBA party menu rather than wait forever.
+    // The wild-battle "use next POKeMON?" YES/NO prompt is a separate
+    // textbox flow and stays on the top screen untouched.
+    else if (DualScreen_BattleUiActive()
+     && DualScreen_BottomScreenLive()
+     && !(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_MULTI | BATTLE_TYPE_RECORDED))
+     && (gBattleBufferA[gActiveBattler][1] & 0xF) == PARTY_ACTION_SEND_OUT)
+    {
+        *(&gBattleStruct->battlerPreventingSwitchout) = gBattleBufferA[gActiveBattler][1] >> 4;
+        *(&gBattleStruct->prevSelectedPartySlot) = gBattleBufferA[gActiveBattler][2];
+        *(&gBattleStruct->abilityPreventingSwitchout) = gBattleBufferA[gActiveBattler][3];
+        gBattlerInMenuId = gActiveBattler;
+        gBattlerControllerFuncs[gActiveBattler] = DualScreen_WaitForMonChoice;
+        DualScreen_SetBattleMenuOpen(2, PARTY_ACTION_SEND_OUT, gActiveBattler);
     }
 #endif
     else

@@ -240,7 +240,12 @@ static void QueueVirtualKeys(u16 keys)
 // stale arm can never hijack a later, physical-button-driven menu open.
 #define DS_TAKEOVER_TTL_FRAMES 240
 
+// The bottom screen counts as live if it fetched a snapshot within this many
+// frames (~3s; it polls every 120ms while its Presentation is showing).
+#define DS_BOTTOM_LIVE_TTL_FRAMES 180
+
 static SDL_SpinLock sBattleMenuLock;
+static u32 sBottomPollFrame;  // frame of the last snapshot poll over JNI; 0 = never
 static u32 sBattleArmMode;    // Java's intent: 0 none, 1 bag, 2 party
 static u32 sBattleArmFrame;
 static u32 sBattleMenuMode;   // controller wait state: 0 closed, 1 bag, 2 party
@@ -319,6 +324,21 @@ void DualScreen_SetBattleMenuResult(u32 result)
     sBattleMenuResult = result;
     sBattleMenuSeq++;
     SDL_AtomicUnlock(&sBattleMenuLock);
+}
+
+u32 DualScreen_BottomScreenLive(void)
+{
+    u32 live;
+    SDL_AtomicLock(&sBattleMenuLock);
+    // Only the Android JNI snapshot poll ever stamps sBottomPollFrame, and
+    // Java polls only while the companion Presentation is actually showing,
+    // so this is FALSE on desktop builds and whenever the bottom display is
+    // gone - flows that would otherwise wait forever on a bottom-screen
+    // choice must then fall back to the GBA menus.
+    live = sBottomPollFrame != 0
+        && sFrameCounter - sBottomPollFrame < DS_BOTTOM_LIVE_TTL_FRAMES;
+    SDL_AtomicUnlock(&sBattleMenuLock);
+    return live;
 }
 
 // ---------------------------------------------------------------------------
@@ -1070,6 +1090,11 @@ JNIEXPORT jint JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_native
 JNIEXPORT jstring JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetSnapshotJson(JNIEnv *env, jclass clazz)
 {
     jstring result;
+    // Liveness heartbeat: Java polls here only while the bottom-screen
+    // Presentation is showing. See DualScreen_BottomScreenLive.
+    SDL_AtomicLock(&sBattleMenuLock);
+    sBottomPollFrame = sFrameCounter;
+    SDL_AtomicUnlock(&sBattleMenuLock);
     if (sSnapshotMutex == NULL)
         return (*env)->NewStringUTF(env, "{\"v\":1,\"inGame\":0,\"inBattle\":0}");
     SDL_LockMutex(sSnapshotMutex);
