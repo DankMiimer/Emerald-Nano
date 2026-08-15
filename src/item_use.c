@@ -41,6 +41,13 @@
 #include "constants/item_effects.h"
 #include "constants/items.h"
 #include "constants/songs.h"
+#ifdef PLATFORM_SDL2
+#include "battle_anim.h" // GetBattlerSide
+#include "battle_gfx_sfx_util.h"
+#include "battle_interface.h"
+#include "constants/species.h"
+#include "platform/dualscreen.h"
+#endif
 
 static void SetUpItemUseCallback(u8);
 static void FieldCB_UseItemOnField(void);
@@ -1137,3 +1144,113 @@ void ItemUseOutOfBattle_CannotUse(u8 taskId)
 }
 
 #undef tUsingRegisteredKeyItem
+
+#ifdef PLATFORM_SDL2
+// Applies one battle-bag item chosen on the bottom screen, replicating what
+// the GBA bag + party menu chain does before returning to battle: validate,
+// run the item effect table, consume the item, and refresh the affected
+// healthbox. The battle engine afterwards receives the item id from the
+// controller and runs its normal scripts (ball throw, "used item" message,
+// run-away) unchanged. `target` is a field party index, or -1 for items
+// that act on the battler whose menu is open (X items, Guard Spec).
+// See platform/dualscreen.h; the ItemUseInBattle_* comparisons mirror the
+// bag's own battleUseFunc dispatch.
+u32 DualScreen_UseBattleItem(u16 itemId, s32 target)
+{
+    ItemUseFunc func;
+    u8 effectType;
+    s32 i;
+
+    if (GetItemBattleUsage(itemId) == 0 || !CheckBagHasItem(itemId, 1))
+        return DS_BMENU_RESULT_CANT_USE;
+
+    func = GetItemBattleFunc(itemId);
+
+    if (func == ItemUseInBattle_PokeBall)
+    {
+        if (IsPlayerPartyAndPokemonStorageFull())
+            return DS_BMENU_RESULT_CANT_USE; // the box is full
+        RemoveBagItem(itemId, 1);
+        return DS_BMENU_RESULT_USED;
+    }
+    if (func == ItemUseInBattle_Escape)
+    {
+        // Poke Doll / Fluffy Tail: wild battles only (as the bag enforces).
+        if (gBattleTypeFlags & BATTLE_TYPE_TRAINER)
+            return DS_BMENU_RESULT_CANT_USE;
+        RemoveBagItem(itemId, 1);
+        return DS_BMENU_RESULT_USED;
+    }
+
+    effectType = GetItemEffectType(itemId);
+    if (func == ItemUseInBattle_StatIncrease
+     || (func == ItemUseInBattle_EnigmaBerry && effectType == ITEM_EFFECT_X_ITEM))
+    {
+        u16 partyId = gBattlerPartyIndexes[gBattlerInMenuId];
+
+        if (ExecuteTableBasedItemEffect(&gPlayerParty[partyId], itemId, partyId, 0))
+            return DS_BMENU_RESULT_NO_EFFECT;
+        PlaySE(SE_USE_ITEM);
+        RemoveBagItem(itemId, 1);
+        return DS_BMENU_RESULT_USED;
+    }
+
+    // Everything else targets a party mon picked on the bottom screen.
+    if (target < 0 || target >= PARTY_SIZE
+     || GetMonData(&gPlayerParty[target], MON_DATA_SPECIES) == SPECIES_NONE
+     || GetMonData(&gPlayerParty[target], MON_DATA_IS_EGG))
+        return DS_BMENU_RESULT_BAD_TARGET;
+
+    if (func == ItemUseInBattle_PPRecovery
+     || (func == ItemUseInBattle_EnigmaBerry && effectType == ITEM_EFFECT_HEAL_PP))
+    {
+        // Ether-style items need a move choice; restore the first move
+        // missing PP (Elixir-style effects cover all moves from index 0).
+        for (i = 0; i < MAX_MON_MOVES; i++)
+        {
+            if (!ExecuteTableBasedItemEffect(&gPlayerParty[target], itemId, target, i))
+                break;
+        }
+        if (i == MAX_MON_MOVES)
+            return DS_BMENU_RESULT_NO_EFFECT;
+        PlaySE(SE_USE_ITEM);
+        RemoveBagItem(itemId, 1);
+    }
+    else if (func == ItemUseInBattle_Medicine || func == ItemUseInBattle_EnigmaBerry)
+    {
+        // HP-EV medicine can't touch Shedinja (NotUsingHPEVItemOnShedinja).
+        if (effectType == ITEM_EFFECT_HP_EV
+         && GetMonData(&gPlayerParty[target], MON_DATA_SPECIES) == SPECIES_SHEDINJA)
+            return DS_BMENU_RESULT_NO_EFFECT;
+        if (ExecuteTableBasedItemEffect(&gPlayerParty[target], itemId, target, 0))
+            return DS_BMENU_RESULT_NO_EFFECT;
+        if (itemId == ITEM_BLUE_FLUTE || itemId == ITEM_RED_FLUTE || itemId == ITEM_YELLOW_FLUTE)
+        {
+            PlaySE(SE_GLASS_FLUTE); // flutes are reusable
+        }
+        else
+        {
+            PlaySE(SE_USE_ITEM);
+            RemoveBagItem(itemId, 1);
+        }
+    }
+    else
+    {
+        return DS_BMENU_RESULT_CANT_USE;
+    }
+
+    // Refresh the on-field healthbox; the GBA flow gets this for free when
+    // the battle screen is rebuilt after the menus close.
+    for (i = 0; i < gBattlersCount; i++)
+    {
+        if (GetBattlerSide(i) == B_SIDE_PLAYER
+         && gBattlerPartyIndexes[i] == target
+         && !(gAbsentBattlerFlags & (1 << i)))
+        {
+            UpdateHealthboxAttribute(gHealthboxSpriteIds[i], &gPlayerParty[target], HEALTHBOX_ALL);
+        }
+    }
+    HandleBattleLowHpMusicChange();
+    return DS_BMENU_RESULT_USED;
+}
+#endif // PLATFORM_SDL2

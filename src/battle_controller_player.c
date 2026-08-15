@@ -1595,6 +1595,96 @@ static void PrintLinkStandbyMsg(void)
     }
 }
 
+#ifdef PLATFORM_SDL2
+// ---------------------------------------------------------------------------
+// Bottom-screen battle bag/party (Gen 4 style): instead of launching the GBA
+// bag or party menu apps, the controller waits here for a choice submitted
+// over JNI and then emits exactly what those menus would have returned, so
+// every downstream engine path (ball throw, item scripts, switch-in logic,
+// failure messages) runs unchanged and the battle never leaves the top
+// screen. See platform/dualscreen.h.
+// ---------------------------------------------------------------------------
+
+static void DualScreen_WaitForItemChoice(void)
+{
+    s32 itemId, target;
+    u32 result;
+
+    if (!DualScreen_TakeBattleChoice(&itemId, &target))
+        return;
+
+    if (itemId <= 0) // cancel: same as closing the bag without choosing
+    {
+        DualScreen_ClearBattleMenu();
+        gSpecialVar_ItemId = ITEM_NONE;
+        BtlController_EmitOneReturnValue(B_COMM_TO_ENGINE, 0);
+        PlayerBufferExecCompleted();
+        return;
+    }
+
+    result = DualScreen_UseBattleItem((u16)itemId, target);
+    if (result == DS_BMENU_RESULT_USED)
+    {
+        gSpecialVar_ItemId = itemId;
+        DualScreen_ClearBattleMenu();
+        BtlController_EmitOneReturnValue(B_COMM_TO_ENGINE, itemId);
+        PlayerBufferExecCompleted();
+    }
+    else
+    {
+        // Rejected; stay open so the bottom screen can show why.
+        DualScreen_SetBattleMenuResult(result);
+    }
+}
+
+static void DualScreen_WaitForMonChoice(void)
+{
+    s32 monId, unused;
+    u8 caseId = gBattleBufferA[gActiveBattler][1] & 0xF;
+    s32 i;
+
+    if (!DualScreen_TakeBattleChoice(&monId, &unused))
+        return;
+
+    if (monId < 0 || monId >= PARTY_SIZE) // cancel
+    {
+        DualScreen_ClearBattleMenu();
+        BtlController_EmitChosenMonReturnValue(B_COMM_TO_ENGINE, PARTY_SIZE, NULL);
+        PlayerBufferExecCompleted();
+        return;
+    }
+
+    if (caseId != PARTY_ACTION_CHOOSE_MON)
+    {
+        // Trapped or an ability prevents switching: the engine already
+        // decided no switch can happen; every pick fails, only cancel works.
+        DualScreen_SetBattleMenuResult(DS_BMENU_RESULT_CANT_USE);
+        return;
+    }
+    if (GetMonData(&gPlayerParty[monId], MON_DATA_SPECIES) == 0
+     || GetMonData(&gPlayerParty[monId], MON_DATA_IS_EGG)
+     || GetMonData(&gPlayerParty[monId], MON_DATA_HP) == 0
+     || monId == gBattleStruct->prevSelectedPartySlot)
+    {
+        DualScreen_SetBattleMenuResult(DS_BMENU_RESULT_BAD_TARGET);
+        return;
+    }
+    for (i = 0; i < gBattlersCount; i++)
+    {
+        if (GetBattlerSide(i) == B_SIDE_PLAYER && monId == gBattlerPartyIndexes[i])
+        {
+            DualScreen_SetBattleMenuResult(DS_BMENU_RESULT_BAD_TARGET);
+            return;
+        }
+    }
+
+    DualScreen_BattleSwitchOrder(monId);
+    DualScreen_ClearBattleMenu();
+    BtlController_EmitChosenMonReturnValue(B_COMM_TO_ENGINE, monId, gBattlePartyCurrentOrder);
+    PlayerBufferExecCompleted();
+}
+#endif // PLATFORM_SDL2
+
 static void PlayerHandleGetMonData(void)
 {
     u8 monData[sizeof(struct Pokemon) * 2 + 56]; // this allows to get full data of two Pokémon, trying to get more will result in overwriting data
@@ -2670,6 +2760,25 @@ static void PlayerHandleChooseItem(void)
 {
     s32 i;
 
+#ifdef PLATFORM_SDL2
+    // Bottom-screen battle bag: when the tap on BAG came from the bottom
+    // screen, wait for its item choice instead of opening the GBA bag.
+    // (Link/frontier item bans were already enforced by the engine before
+    // this command was emitted; pyramid and multi keep their own menus.)
+    if (DualScreen_BattleUiActive()
+     && !(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_MULTI
+                              | BATTLE_TYPE_PYRAMID | BATTLE_TYPE_RECORDED))
+     && DualScreen_TakeBattleTakeover(1))
+    {
+        gBattlerControllerFuncs[gActiveBattler] = DualScreen_WaitForItemChoice;
+        gBattlerInMenuId = gActiveBattler;
+        for (i = 0; i < (int)ARRAY_COUNT(gBattlePartyCurrentOrder); i++)
+            gBattlePartyCurrentOrder[i] = gBattleBufferA[gActiveBattler][1 + i];
+        DualScreen_SetBattleMenuOpen(1, 0, gActiveBattler);
+        return;
+    }
+#endif
+
     BeginNormalPaletteFade(PALETTES_ALL, 0, 0, 0x10, RGB_BLACK);
     gBattlerControllerFuncs[gActiveBattler] = OpenBagAndChooseItem;
     gBattlerInMenuId = gActiveBattler;
@@ -2690,6 +2799,27 @@ static void PlayerHandleChoosePokemon(void)
         BtlController_EmitChosenMonReturnValue(B_COMM_TO_ENGINE, gBattlerPartyIndexes[gActiveBattler] + 1, gBattlePartyCurrentOrder);
         PlayerBufferExecCompleted();
     }
+#ifdef PLATFORM_SDL2
+    // Bottom-screen battle party: when the tap on POKeMON came from the
+    // bottom screen, wait for its switch choice instead of opening the GBA
+    // party menu. Only the action-selection cases are taken over; forced
+    // send-out (PARTY_ACTION_SEND_OUT) and item-use party screens keep the
+    // classic flow, as do link/multi battles.
+    else if (DualScreen_BattleUiActive()
+     && !(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_MULTI | BATTLE_TYPE_RECORDED))
+     && ((gBattleBufferA[gActiveBattler][1] & 0xF) == PARTY_ACTION_CHOOSE_MON
+      || (gBattleBufferA[gActiveBattler][1] & 0xF) == PARTY_ACTION_CANT_SWITCH
+      || (gBattleBufferA[gActiveBattler][1] & 0xF) == PARTY_ACTION_ABILITY_PREVENTS)
+     && DualScreen_TakeBattleTakeover(2))
+    {
+        *(&gBattleStruct->battlerPreventingSwitchout) = gBattleBufferA[gActiveBattler][1] >> 4;
+        *(&gBattleStruct->prevSelectedPartySlot) = gBattleBufferA[gActiveBattler][2];
+        *(&gBattleStruct->abilityPreventingSwitchout) = gBattleBufferA[gActiveBattler][3];
+        gBattlerInMenuId = gActiveBattler;
+        gBattlerControllerFuncs[gActiveBattler] = DualScreen_WaitForMonChoice;
+        DualScreen_SetBattleMenuOpen(2, gBattleBufferA[gActiveBattler][1] & 0xF, gActiveBattler);
+    }
+#endif
     else
     {
         gBattleControllerData[gActiveBattler] = CreateTask(TaskDummy, 0xFF);

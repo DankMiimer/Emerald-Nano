@@ -18,10 +18,14 @@
 
 #include "global.h"
 #include "fonts.h"
+#include "graphics.h"
 #include "main.h"
 #include "platform.h"
 #include "pokemon.h"
 #include "pokemon_icon.h"
+#include "item_icon.h"
+#include "item_use.h"
+#include "party_menu.h"
 #include "battle.h"
 #include "battle_anim.h"
 #include "data.h"
@@ -38,13 +42,15 @@
 #include "constants/characters.h"
 #include "constants/flags.h"
 #include "constants/items.h"
+#include "constants/item_effects.h"
+#include "constants/party_menu.h"
 #include "constants/pokemon.h"
 #include "constants/region_map_sections.h"
 #include "constants/trainers.h"
 
 extern u32 CountPlayerTrainerStars(void);
 
-#define SNAPSHOT_CAPACITY 24576
+#define SNAPSHOT_CAPACITY 28672
 #define SNAPSHOT_FRAME_INTERVAL 8
 #define VIRTUAL_KEY_QUEUE_SIZE 64
 
@@ -224,6 +230,98 @@ static void QueueVirtualKeys(u16 keys)
 }
 
 // ---------------------------------------------------------------------------
+// Battle bag/party takeover: pending-choice mailbox between the bottom
+// screen and the player battle controller (see platform/dualscreen.h).
+// All state here is zero-initialized runtime .bss: nothing is written before
+// DualScreen_FillAssets runs, so it is safe w.r.t. asset-hole packaging.
+// ---------------------------------------------------------------------------
+
+// An armed tap expires if no menu opens within this many frames (~4s), so a
+// stale arm can never hijack a later, physical-button-driven menu open.
+#define DS_TAKEOVER_TTL_FRAMES 240
+
+static SDL_SpinLock sBattleMenuLock;
+static u32 sBattleArmMode;    // Java's intent: 0 none, 1 bag, 2 party
+static u32 sBattleArmFrame;
+static u32 sBattleMenuMode;   // controller wait state: 0 closed, 1 bag, 2 party
+static u32 sBattleMenuCaseId; // PARTY_ACTION_* for the party wait state
+static u32 sBattleMenuBattler;
+static u32 sBattleMenuResult; // DS_BMENU_RESULT_* of the last submission
+static u32 sBattleMenuSeq;    // bumps whenever result changes, for the UI
+static u32 sBattleChoicePending;
+static s32 sBattleChoiceA;
+static s32 sBattleChoiceB;
+
+u32 DualScreen_TakeBattleTakeover(u32 mode)
+{
+    u32 taken = FALSE;
+    SDL_AtomicLock(&sBattleMenuLock);
+    if (sBattleArmMode == mode && sFrameCounter - sBattleArmFrame < DS_TAKEOVER_TTL_FRAMES)
+    {
+        taken = TRUE;
+        sBattleArmMode = 0;
+    }
+    SDL_AtomicUnlock(&sBattleMenuLock);
+    return taken;
+}
+
+void DualScreen_SetBattleMenuOpen(u32 mode, u32 caseId, u32 battler)
+{
+    SDL_AtomicLock(&sBattleMenuLock);
+    sBattleMenuMode = mode;
+    sBattleMenuCaseId = caseId;
+    sBattleMenuBattler = battler;
+    sBattleMenuResult = DS_BMENU_RESULT_NONE;
+    sBattleChoicePending = FALSE; // a fresh menu never inherits a stale choice
+    SDL_AtomicUnlock(&sBattleMenuLock);
+}
+
+void DualScreen_ClearBattleMenu(void)
+{
+    SDL_AtomicLock(&sBattleMenuLock);
+    sBattleMenuMode = 0;
+    sBattleMenuCaseId = 0;
+    sBattleChoicePending = FALSE;
+    SDL_AtomicUnlock(&sBattleMenuLock);
+}
+
+u32 DualScreen_BattleMenuInfo(u32 *caseId, u32 *battler, u32 *result, u32 *seq)
+{
+    u32 mode;
+    SDL_AtomicLock(&sBattleMenuLock);
+    mode = sBattleMenuMode;
+    *caseId = sBattleMenuCaseId;
+    *battler = sBattleMenuBattler;
+    *result = sBattleMenuResult;
+    *seq = sBattleMenuSeq;
+    SDL_AtomicUnlock(&sBattleMenuLock);
+    return mode;
+}
+
+u32 DualScreen_TakeBattleChoice(s32 *a, s32 *b)
+{
+    u32 taken = FALSE;
+    SDL_AtomicLock(&sBattleMenuLock);
+    if (sBattleChoicePending)
+    {
+        *a = sBattleChoiceA;
+        *b = sBattleChoiceB;
+        sBattleChoicePending = FALSE;
+        taken = TRUE;
+    }
+    SDL_AtomicUnlock(&sBattleMenuLock);
+    return taken;
+}
+
+void DualScreen_SetBattleMenuResult(u32 result)
+{
+    SDL_AtomicLock(&sBattleMenuLock);
+    sBattleMenuResult = result;
+    sBattleMenuSeq++;
+    SDL_AtomicUnlock(&sBattleMenuLock);
+}
+
+// ---------------------------------------------------------------------------
 // GBA charset -> ASCII
 // ---------------------------------------------------------------------------
 
@@ -272,6 +370,13 @@ static void DecodeGbaString(char *dest, int destSize, const u8 *src, int maxSrcL
          || c == CHAR_KEYPAD_ICON || c == CHAR_EXTRA_SYMBOL
          || c == EXT_CTRL_CODE_BEGIN || c == PLACEHOLDER_BEGIN || c == CHAR_DYNAMIC)
             break;
+        if (c == CHAR_e_ACUTE && out < destSize - 2)
+        {
+            // é as UTF-8; the Java font maps it back to the game's glyph.
+            dest[out++] = (char)0xC3;
+            dest[out++] = (char)0xA9;
+            continue;
+        }
         decoded = DecodeGbaChar(c);
         if (decoded != 0)
             dest[out++] = decoded;
@@ -428,15 +533,58 @@ static void WritePartyMonJson(struct JsonWriter *w, struct Pokemon *mon)
         DecodeGbaString(moveName, sizeof(moveName), gMoveNames[move], MOVE_NAME_LENGTH + 1);
         JsonPut(w, "{\"id\":%u,\"name\":", move);
         JsonPutString(w, moveName);
-        JsonPut(w, ",\"pp\":%u,\"maxPp\":%u,\"type\":%u}",
+        JsonPut(w, ",\"pp\":%u,\"maxPp\":%u,\"type\":%u,\"pw\":%u,\"ac\":%u}",
                 GetMonData(mon, MON_DATA_PP1 + i),
                 CalculatePPWithBonus(move, ppBonuses, i),
-                gBattleMoves[move].type);
+                gBattleMoves[move].type,
+                gBattleMoves[move].power,
+                gBattleMoves[move].accuracy);
     }
     JsonPut(w, "]}");
 }
 
-static void WriteBattleMonJson(struct JsonWriter *w, struct BattlePokemon *mon)
+// Effectiveness class of a damaging move against one foe, straight from the
+// engine's own gTypeEffectiveness table (battle_main.c): -1 no hint (status
+// move or no foe), 0 no effect, 1 not very effective, 2 normal, 3 super
+// effective. Dual types multiply; the rows behind the TYPE_FORESIGHT marker
+// (the Ghost immunities) are applied like the normal ones. Abilities such as
+// Levitate are deliberately not consulted: this is a table lookup, not a
+// damage calc.
+static int MoveEffClass(u16 move, const struct BattlePokemon *def)
+{
+    int mul = TYPE_MUL_NORMAL;
+    u8 atkType;
+    int i;
+
+    if (def == NULL || move == MOVE_NONE || move >= MOVES_COUNT)
+        return -1;
+    if (gBattleMoves[move].power == 0)
+        return -1; // status moves carry no hint
+    atkType = gBattleMoves[move].type;
+    for (i = 0; TYPE_EFFECT_ATK_TYPE(i) != TYPE_ENDTABLE; i += 3)
+    {
+        if (TYPE_EFFECT_ATK_TYPE(i) == TYPE_FORESIGHT)
+            continue; // marker row only; keep the Ghost rows behind it
+        if (TYPE_EFFECT_ATK_TYPE(i) != atkType)
+            continue;
+        if (TYPE_EFFECT_DEF_TYPE(i) == def->types[0])
+            mul = mul * TYPE_EFFECT_MULTIPLIER(i) / 10;
+        if (def->types[1] != def->types[0] && TYPE_EFFECT_DEF_TYPE(i) == def->types[1])
+            mul = mul * TYPE_EFFECT_MULTIPLIER(i) / 10;
+    }
+    if (mul == 0)
+        return 0;
+    if (mul < TYPE_MUL_NORMAL)
+        return 1;
+    if (mul == TYPE_MUL_NORMAL)
+        return 2;
+    return 3;
+}
+
+// foes: up to two current opposing battlers ([0] left, [1] right; NULL when
+// absent/fainted) for the per-move effectiveness hints, or NULL for none.
+static void WriteBattleMonJson(struct JsonWriter *w, struct BattlePokemon *mon,
+                               const struct BattlePokemon *const *foes)
 {
     char text[24];
     u16 species = mon->species;
@@ -478,10 +626,18 @@ static void WriteBattleMonJson(struct JsonWriter *w, struct BattlePokemon *mon)
         DecodeGbaString(moveName, sizeof(moveName), gMoveNames[move], MOVE_NAME_LENGTH + 1);
         JsonPut(w, "{\"id\":%u,\"name\":", move);
         JsonPutString(w, moveName);
-        JsonPut(w, ",\"pp\":%u,\"maxPp\":%u,\"type\":%u}",
+        JsonPut(w, ",\"pp\":%u,\"maxPp\":%u,\"type\":%u,\"pw\":%u,\"ac\":%u",
                 mon->pp[i],
                 CalculatePPWithBonus(move, mon->ppBonuses, i),
-                gBattleMoves[move].type);
+                gBattleMoves[move].type,
+                gBattleMoves[move].power,
+                gBattleMoves[move].accuracy);
+        if (foes != NULL)
+        {
+            JsonPut(w, ",\"eff\":[%d,%d]",
+                    MoveEffClass(move, foes[0]), MoveEffClass(move, foes[1]));
+        }
+        JsonPut(w, "}");
     }
     JsonPut(w, "]}");
 }
@@ -668,10 +824,85 @@ static void BuildSnapshot(char *buffer, int capacity)
                 JsonPut(w, "\"menu\":%d,\"actionCursor\":%d,\"moveCursor\":%d,",
                         menu, gActionSelectionCursor[playerBattler],
                         gMoveSelectionCursor[playerBattler]);
-                JsonPut(w, "\"playerMon\":");
-                WriteBattleMonJson(w, &gBattleMons[playerBattler]);
-                JsonPut(w, ",\"enemyMon\":");
-                WriteBattleMonJson(w, &gBattleMons[enemyBattler]);
+
+                // Battle bag/party takeover state for the bottom screen.
+                {
+                    u32 subCase, subBattler, subResult, subSeq;
+                    u32 sub = DualScreen_BattleMenuInfo(&subCase, &subBattler, &subResult, &subSeq);
+                    s32 act0 = -1, act1 = -1;
+                    int b;
+
+                    for (b = 0; b < gBattlersCount; b++)
+                    {
+                        if (GetBattlerSide(b) == B_SIDE_PLAYER && !(gAbsentBattlerFlags & (1 << b)))
+                        {
+                            if (act0 < 0)
+                                act0 = gBattlerPartyIndexes[b];
+                            else
+                                act1 = gBattlerPartyIndexes[b];
+                        }
+                    }
+                    JsonPut(w, "\"double\":%d,\"canUseItems\":%d,\"canCatch\":%d,",
+                            (gBattleTypeFlags & BATTLE_TYPE_DOUBLE) ? 1 : 0,
+                            (gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_FRONTIER_NO_PYRAMID
+                                                 | BATTLE_TYPE_EREADER_TRAINER | BATTLE_TYPE_RECORDED_LINK
+                                                 | BATTLE_TYPE_PYRAMID | BATTLE_TYPE_MULTI)) ? 0 : 1,
+                            (gBattleTypeFlags & BATTLE_TYPE_TRAINER) ? 0 : 1);
+                    JsonPut(w, "\"sub\":%u,\"subCase\":%u,\"subResult\":%u,\"subSeq\":%u,",
+                            sub, subCase, subResult, subSeq);
+                    JsonPut(w, "\"active\":[%d,%d],\"prevSel\":%d,", act0, act1,
+                            gBattleStruct != NULL ? gBattleStruct->prevSelectedPartySlot : PARTY_SIZE);
+                }
+
+                // Current foes, for the per-move effectiveness hints and the
+                // doubles cards: [0] the left foe, [1] the right foe (doubles
+                // only). Absent or fainted battlers stay NULL so a hint is
+                // never shown against a mon that is no longer there.
+                {
+                    const struct BattlePokemon *foes[2] = {NULL, NULL};
+                    s32 playerMon2 = -1;
+                    s32 enemyMon2 = -1;
+
+                    if (!(gAbsentBattlerFlags & (1u << enemyBattler))
+                     && gBattleMons[enemyBattler].hp > 0)
+                        foes[0] = &gBattleMons[enemyBattler];
+                    if (gBattleTypeFlags & BATTLE_TYPE_DOUBLE)
+                    {
+                        u8 playerRight = GetBattlerAtPosition(B_POSITION_PLAYER_RIGHT);
+                        u8 enemyRight = GetBattlerAtPosition(B_POSITION_OPPONENT_RIGHT);
+                        if (enemyRight < MAX_BATTLERS_COUNT
+                         && !(gAbsentBattlerFlags & (1u << enemyRight))
+                         && gBattleMons[enemyRight].hp > 0)
+                        {
+                            foes[1] = &gBattleMons[enemyRight];
+                            enemyMon2 = enemyRight;
+                        }
+                        // The partner of whichever battler owns the open menu.
+                        if (playerRight < MAX_BATTLERS_COUNT)
+                        {
+                            u8 playerLeft = GetBattlerAtPosition(B_POSITION_PLAYER_LEFT);
+                            u8 partner = playerBattler == playerRight ? playerLeft : playerRight;
+                            if (partner < MAX_BATTLERS_COUNT
+                             && !(gAbsentBattlerFlags & (1u << partner)))
+                                playerMon2 = partner;
+                        }
+                    }
+
+                    JsonPut(w, "\"playerMon\":");
+                    WriteBattleMonJson(w, &gBattleMons[playerBattler], foes);
+                    JsonPut(w, ",\"enemyMon\":");
+                    WriteBattleMonJson(w, &gBattleMons[enemyBattler], NULL);
+                    if (playerMon2 >= 0)
+                    {
+                        JsonPut(w, ",\"playerMon2\":");
+                        WriteBattleMonJson(w, &gBattleMons[playerMon2], NULL);
+                    }
+                    if (enemyMon2 >= 0)
+                    {
+                        JsonPut(w, ",\"enemyMon2\":");
+                        WriteBattleMonJson(w, &gBattleMons[enemyMon2], NULL);
+                    }
+                }
                 JsonPut(w, "},");
             }
         }
@@ -765,6 +996,75 @@ JNIEXPORT void JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_native
     (*env)->GetIntArrayRegion(env, masks, 0, length, buffer);
     for (i = 0; i < length; i++)
         QueueVirtualKeys((u16)buffer[i]);
+}
+
+// Arms (or, with mode 0, disarms) the battle bag/party takeover; called
+// right before the bottom screen key-walks the action cursor to BAG or
+// POKeMON. See DualScreen_TakeBattleTakeover.
+JNIEXPORT void JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeBattleArm(JNIEnv *env, jclass clazz, jint mode)
+{
+    SDL_AtomicLock(&sBattleMenuLock);
+    sBattleArmMode = (u32)mode;
+    sBattleArmFrame = sFrameCounter;
+    SDL_AtomicUnlock(&sBattleMenuLock);
+}
+
+// Submits the pending battle choice. Bag wait: a = item id, b = target
+// party slot (-1 when the item targets the active mon or needs no target).
+// Party wait: a = party slot. a = -1 cancels back to the action menu.
+JNIEXPORT void JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeBattleSubmit(JNIEnv *env, jclass clazz, jint a, jint b)
+{
+    SDL_AtomicLock(&sBattleMenuLock);
+    sBattleChoiceA = a;
+    sBattleChoiceB = b;
+    sBattleChoicePending = TRUE;
+    SDL_AtomicUnlock(&sBattleMenuLock);
+}
+
+// How an item can be used from the battle bag: 0 not usable, 1 ball,
+// 2 medicine (pick a target mon), 3 self/no target (X items, Guard Spec),
+// 4 escape item (wild battles only), 5 PP restore (pick a target mon).
+// Mirrors the classification DualScreen_UseBattleItem applies.
+JNIEXPORT jint JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetItemBattleCategory(JNIEnv *env, jclass clazz, jint itemId)
+{
+    ItemUseFunc func;
+
+    if (itemId <= ITEM_NONE || itemId >= ITEMS_COUNT || GetItemBattleUsage(itemId) == 0)
+        return 0;
+    func = GetItemBattleFunc(itemId);
+    if (func == ItemUseInBattle_PokeBall)
+        return 1;
+    if (func == ItemUseInBattle_Medicine)
+        return 2;
+    if (func == ItemUseInBattle_StatIncrease)
+        return 3;
+    if (func == ItemUseInBattle_Escape)
+        return 4;
+    if (func == ItemUseInBattle_PPRecovery)
+        return 5;
+    if (func == ItemUseInBattle_EnigmaBerry)
+    {
+        switch (GetItemEffectType(itemId))
+        {
+        case ITEM_EFFECT_X_ITEM:
+            return 3;
+        case ITEM_EFFECT_HEAL_PP:
+            return 5;
+        case ITEM_EFFECT_HEAL_HP:
+        case ITEM_EFFECT_CURE_POISON:
+        case ITEM_EFFECT_CURE_SLEEP:
+        case ITEM_EFFECT_CURE_BURN:
+        case ITEM_EFFECT_CURE_FREEZE:
+        case ITEM_EFFECT_CURE_PARALYSIS:
+        case ITEM_EFFECT_CURE_ALL_STATUS:
+        case ITEM_EFFECT_CURE_CONFUSION:
+        case ITEM_EFFECT_CURE_INFATUATION:
+            return 2;
+        default:
+            return 0;
+        }
+    }
+    return 0;
 }
 
 JNIEXPORT jstring JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetSnapshotJson(JNIEnv *env, jclass clazz)
@@ -1022,6 +1322,319 @@ JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_n
     if (result == NULL)
         return NULL;
     (*env)->SetIntArrayRegion(env, result, 0, 32 * 32, pixels);
+    return result;
+}
+
+// A 24x24 bag item icon as ARGB pixels, decoded from the game's own icon
+// data. Both the pic and its palette are LZ77-compressed (see AddItemIconSprite
+// in item_icon.c); the pic decompresses to 3x3 tiles of 8x8 at 4bpp.
+JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetItemIcon(JNIEnv *env, jclass clazz, jint itemId)
+{
+    u8 gfx[0x120];
+    u16 pal[16];
+    jint pixels[24 * 24];
+    jintArray result;
+    int tileX, tileY, y, x;
+
+    if (itemId <= ITEM_NONE || itemId >= ITEMS_COUNT)
+        return NULL;
+    LZ77UnCompWram(GetItemIconPicOrPalette(itemId, 0), gfx);
+    LZ77UnCompWram(GetItemIconPicOrPalette(itemId, 1), pal);
+
+    for (tileY = 0; tileY < 3; tileY++)
+    for (tileX = 0; tileX < 3; tileX++)
+    for (y = 0; y < 8; y++)
+    for (x = 0; x < 8; x++)
+    {
+        int tileIndex = tileY * 3 + tileX;
+        u8 packed = gfx[tileIndex * 32 + y * 4 + x / 2];
+        u8 colorIndex = (x & 1) ? (packed >> 4) : (packed & 0xF);
+        int px = tileX * 8 + x;
+        int py = tileY * 8 + y;
+        pixels[py * 24 + px] = colorIndex == 0 ? 0 : Bgr555ToArgb(pal[colorIndex]);
+    }
+
+    result = (*env)->NewIntArray(env, 24 * 24);
+    if (result == NULL)
+        return NULL;
+    (*env)->SetIntArrayRegion(env, result, 0, 24 * 24, pixels);
+    return result;
+}
+
+// Item descriptions span multiple lines and use é, so DecodeGbaString (which
+// stops at the first control code) won't do: newlines become spaces (the Java
+// side re-wraps to fit) and é is emitted as UTF-8.
+static void DecodeItemDescription(char *dest, int destSize, const u8 *src)
+{
+    int out = 0;
+    int i;
+
+    for (i = 0; src != NULL && i < 256 && out < destSize - 3; i++)
+    {
+        u8 c = src[i];
+        char decoded;
+        if (c == EOS)
+            break;
+        if (c == CHAR_NEWLINE || c == CHAR_PROMPT_SCROLL || c == CHAR_PROMPT_CLEAR)
+        {
+            if (out > 0 && dest[out - 1] != ' ')
+                dest[out++] = ' ';
+            continue;
+        }
+        if (c == CHAR_KEYPAD_ICON || c == CHAR_EXTRA_SYMBOL
+         || c == EXT_CTRL_CODE_BEGIN || c == PLACEHOLDER_BEGIN || c == CHAR_DYNAMIC)
+            break;
+        if (c == CHAR_e_ACUTE)
+        {
+            dest[out++] = (char)0xC3;
+            dest[out++] = (char)0xA9;
+            continue;
+        }
+        decoded = DecodeGbaChar(c);
+        if (decoded != 0)
+            dest[out++] = decoded;
+    }
+    dest[out] = '\0';
+}
+
+// The in-game description text for an item, decoded to UTF-8.
+JNIEXPORT jstring JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetItemDescription(JNIEnv *env, jclass clazz, jint itemId)
+{
+    char text[256];
+
+    if (itemId <= ITEM_NONE || itemId >= ITEMS_COUNT)
+        return NULL;
+    DecodeItemDescription(text, sizeof(text), GetItemDescription(itemId));
+    return (*env)->NewStringUTF(env, text);
+}
+
+// Implemented in party_menu.c: the party menu slot tilemaps and the
+// held-item/mail mark graphics.
+extern const u8 *DualScreen_GetPartySlotTilemap(u32 kind, u32 *width, u32 *height);
+extern const u32 *DualScreen_GetHeldItemGfx(void);
+extern const u16 *DualScreen_GetHeldItemPal(void);
+
+// A party menu slot box as ARGB pixels, composed from the game's own
+// tileset/tilemaps. Kinds: 0 main (80x56), 1 main no-HP (eggs), 2 wide
+// (144x24), 3 wide no-HP, 4 wide empty. The slot windows use palette bank 3
+// of the party bg palette; the fainted recolor swaps the box colors (indices
+// 1, 4-8) from bank 5, exactly like LoadPartyBoxPalette does.
+JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetPartySlot(JNIEnv *env, jclass clazz, jint kind, jint fainted)
+{
+    static u8 sGfx[2048];
+    static u16 sPal[11 * 16];
+    u16 bank[16];
+    u32 tilesWide, tilesHigh;
+    const u8 *tilemap;
+    jint *pixels;
+    jintArray result;
+    int widthPx, tx, ty, py, px, i;
+
+    if (kind < 0 || kind > 4)
+        return NULL;
+    tilemap = DualScreen_GetPartySlotTilemap(kind, &tilesWide, &tilesHigh);
+    LZ77UnCompWram(gPartyMenuBg_Gfx, sGfx);
+    LZ77UnCompWram(gPartyMenuBg_Pal, sPal);
+    memcpy(bank, &sPal[3 * 16], sizeof(bank));
+    if (fainted)
+    {
+        bank[1] = sPal[5 * 16 + 1];
+        for (i = 4; i <= 8; i++)
+            bank[i] = sPal[5 * 16 + i];
+    }
+
+    widthPx = tilesWide * 8;
+    pixels = malloc(tilesWide * tilesHigh * 64 * sizeof(jint));
+    if (pixels == NULL)
+        return NULL;
+    for (ty = 0; ty < (int)tilesHigh; ty++)
+    for (tx = 0; tx < (int)tilesWide; tx++)
+    {
+        const u8 *src = &sGfx[tilemap[ty * tilesWide + tx] * 32];
+        for (py = 0; py < 8; py++)
+        for (px = 0; px < 8; px++)
+        {
+            u8 packed = src[py * 4 + px / 2];
+            u8 colorIndex = (px & 1) ? (packed >> 4) : (packed & 0xF);
+            pixels[(ty * 8 + py) * widthPx + tx * 8 + px] =
+                    colorIndex == 0 ? 0 : Bgr555ToArgb(bank[colorIndex]);
+        }
+    }
+
+    result = (*env)->NewIntArray(env, tilesWide * tilesHigh * 64);
+    if (result != NULL)
+        (*env)->SetIntArrayRegion(env, result, 0, tilesWide * tilesHigh * 64, pixels);
+    free(pixels);
+    return result;
+}
+
+// The party menu's full 240x160 background layer (BG1) as ARGB pixels,
+// composed exactly from what AllocPartyMenuBgGfx loads: gPartyMenuBg_Gfx
+// (LZ 4bpp tiles), gPartyMenuBg_Tilemap (LZ 32x32 u16 text-BG map: tile
+// index, flip bits, palette bank) and gPartyMenuBg_Pal (LZ, 11 banks).
+// Transparent pixels resolve to the backdrop color (palette entry 0), so
+// the composed image is fully opaque.
+JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetPartyBgImage(JNIEnv *env, jclass clazz)
+{
+    static u8 sGfx[2048];
+    static u16 sTilemap[32 * 32];
+    static u16 sPal[11 * 16];
+    jint *pixels;
+    jintArray result;
+    int tx, ty, py, px;
+
+    LZ77UnCompWram(gPartyMenuBg_Gfx, sGfx);
+    LZ77UnCompWram(gPartyMenuBg_Tilemap, sTilemap);
+    LZ77UnCompWram(gPartyMenuBg_Pal, sPal);
+
+    pixels = malloc(240 * 160 * sizeof(jint));
+    if (pixels == NULL)
+        return NULL;
+
+    for (ty = 0; ty < 20; ty++)
+    for (tx = 0; tx < 30; tx++)
+    {
+        u16 entry = sTilemap[ty * 32 + tx];
+        int tile = entry & 0x3FF;
+        int bankNum = (entry >> 12) & 0xF;
+        const u8 *src = &sGfx[tile * 32];
+        const u16 *bank;
+        int hflip = (entry & (1 << 10)) != 0;
+        int vflip = (entry & (1 << 11)) != 0;
+
+        if (bankNum > 10)
+            bankNum = 0;
+        bank = &sPal[bankNum * 16];
+        for (py = 0; py < 8; py++)
+        for (px = 0; px < 8; px++)
+        {
+            int sx = hflip ? 7 - px : px;
+            int sy = vflip ? 7 - py : py;
+            u8 colorIndex = 0;
+            if (tile * 32 < (int)sizeof(sGfx))
+            {
+                u8 packed = src[sy * 4 + sx / 2];
+                colorIndex = (sx & 1) ? (packed >> 4) : (packed & 0xF);
+            }
+            pixels[(ty * 8 + py) * 240 + tx * 8 + px] =
+                    Bgr555ToArgb(colorIndex == 0 ? sPal[0] : bank[colorIndex]);
+        }
+    }
+
+    result = (*env)->NewIntArray(env, 240 * 160);
+    if (result != NULL)
+        (*env)->SetIntArrayRegion(env, result, 0, 240 * 160, pixels);
+    free(pixels);
+    return result;
+}
+
+// The party menu status tags as ARGB: 8 tags x 32x8 pixels, tag-major, in
+// sheet order PSN, PAR, SLP, FRZ, BRN, PKRS, FNT, blank.
+JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetStatusIcons(JNIEnv *env, jclass clazz)
+{
+    static u8 sGfx[0x400];
+    static u16 sPal[16];
+    jint pixels[8 * 32 * 8];
+    jintArray result;
+    int icon, tile, py, px;
+
+    LZ77UnCompWram(gStatusGfx_Icons, sGfx);
+    LZ77UnCompWram(gStatusPal_Icons, sPal);
+
+    // 32x64 sheet: each tag is one row of 4 tiles.
+    for (icon = 0; icon < 8; icon++)
+    for (tile = 0; tile < 4; tile++)
+    {
+        const u8 *src = &sGfx[(icon * 4 + tile) * 32];
+        jint *out = &pixels[icon * 32 * 8];
+        for (py = 0; py < 8; py++)
+        for (px = 0; px < 8; px++)
+        {
+            u8 packed = src[py * 4 + px / 2];
+            u8 colorIndex = (px & 1) ? (packed >> 4) : (packed & 0xF);
+            out[py * 32 + tile * 8 + px] = colorIndex == 0 ? 0 : Bgr555ToArgb(sPal[colorIndex]);
+        }
+    }
+
+    result = (*env)->NewIntArray(env, 8 * 32 * 8);
+    if (result != NULL)
+        (*env)->SetIntArrayRegion(env, result, 0, 8 * 32 * 8, pixels);
+    return result;
+}
+
+// The party menu's held-item marks as ARGB: 2 marks (item, mail) x 8x8.
+JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetHoldIcons(JNIEnv *env, jclass clazz)
+{
+    const u8 *gfx = (const u8 *)DualScreen_GetHeldItemGfx();
+    const u16 *pal = DualScreen_GetHeldItemPal();
+    jint pixels[2 * 8 * 8];
+    jintArray result;
+    int icon, py, px;
+
+    for (icon = 0; icon < 2; icon++)
+    for (py = 0; py < 8; py++)
+    for (px = 0; px < 8; px++)
+    {
+        u8 packed = gfx[icon * 32 + py * 4 + px / 2];
+        u8 colorIndex = (px & 1) ? (packed >> 4) : (packed & 0xF);
+        pixels[icon * 64 + py * 8 + px] = colorIndex == 0 ? 0 : Bgr555ToArgb(pal[colorIndex]);
+    }
+
+    result = (*env)->NewIntArray(env, 2 * 8 * 8);
+    if (result != NULL)
+        (*env)->SetIntArrayRegion(env, result, 0, 2 * 8 * 8, pixels);
+    return result;
+}
+
+// Implemented in pokemon_summary_screen.c: which of the three palettes in
+// gMoveTypes_Pal each move-type icon uses.
+extern const u8 *DualScreen_GetMoveTypePalNums(void);
+
+// The summary screen's move-type icons as ARGB: NUMBER_OF_MON_TYPES icons of
+// 32x16 pixels, type-major, decoded from the game's own compressed sheet
+// (gMoveTypes_Gfx; each icon is 8 sequential 4bpp tiles, 4 across x 2 down)
+// with the per-type palette bank the summary screen assigns.
+JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetTypeIcons(JNIEnv *env, jclass clazz)
+{
+    // The sheet also carries the five contest category icons behind the types.
+    static u8 sGfx[(NUMBER_OF_MON_TYPES + 5) * 0x100];
+    static u16 sPal[3 * 16];
+    const u8 *palNums = DualScreen_GetMoveTypePalNums();
+    jint *pixels;
+    jintArray result;
+    int type, tile, py, px;
+
+    LZ77UnCompWram(gMoveTypes_Gfx, sGfx);
+    LZ77UnCompWram(gMoveTypes_Pal, sPal);
+
+    pixels = malloc(NUMBER_OF_MON_TYPES * 32 * 16 * sizeof(jint));
+    if (pixels == NULL)
+        return NULL;
+
+    for (type = 0; type < NUMBER_OF_MON_TYPES; type++)
+    {
+        const u16 *pal = &sPal[(palNums[type] - 13) * 16];
+        jint *out = &pixels[type * 32 * 16];
+        for (tile = 0; tile < 8; tile++)
+        {
+            const u8 *src = &sGfx[type * 0x100 + tile * 32];
+            int baseX = (tile & 3) * 8;
+            int baseY = (tile >> 2) * 8;
+            for (py = 0; py < 8; py++)
+            for (px = 0; px < 8; px++)
+            {
+                u8 packed = src[py * 4 + px / 2];
+                u8 colorIndex = (px & 1) ? (packed >> 4) : (packed & 0xF);
+                out[(baseY + py) * 32 + baseX + px] =
+                        colorIndex == 0 ? 0 : Bgr555ToArgb(pal[colorIndex]);
+            }
+        }
+    }
+
+    result = (*env)->NewIntArray(env, NUMBER_OF_MON_TYPES * 32 * 16);
+    if (result != NULL)
+        (*env)->SetIntArrayRegion(env, result, 0, NUMBER_OF_MON_TYPES * 32 * 16, pixels);
+    free(pixels);
     return result;
 }
 

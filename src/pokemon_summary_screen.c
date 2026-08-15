@@ -4153,3 +4153,14 @@ static void KeepMoveSelectorVisible(u8 firstSpriteId)
         gSprites[spriteIds[i]].invisible = FALSE;
     }
 }
+
+#ifdef PLATFORM_SDL2
+// Accessor for the dual-screen bridge: which of the three palettes in
+// gMoveTypes_Pal each move-type icon uses (the summary screen loads them
+// into OAM banks 13-15; subtract 13 for the index into the decompressed
+// palette data). See platform/dualscreen.h.
+const u8 *DualScreen_GetMoveTypePalNums(void)
+{
+    return sMoveTypeToOamPaletteNum;
+}
+#endif

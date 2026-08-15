@@ -34,4 +34,48 @@ u32 DualScreen_PlayerAtMoveSelect(void);
 s32 DualScreen_PlayerActionBattler(void);
 s32 DualScreen_PlayerMoveBattler(void);
 
+// ---------------------------------------------------------------------------
+// Battle bag/party takeover (Gen 4 style): the bottom screen arms a takeover
+// before key-walking the action cursor to BAG or POKeMON; the player battle
+// controller then waits for a choice submitted over JNI instead of opening
+// the GBA bag/party menu apps, and the battle never leaves the top screen.
+// All backing state is runtime-only .bss in dualscreen_bridge.c.
+// ---------------------------------------------------------------------------
+
+// Result codes reported back to the bottom screen after a submission.
+enum {
+    DS_BMENU_RESULT_NONE = 0,
+    DS_BMENU_RESULT_USED = 1,        // accepted; menu closed
+    DS_BMENU_RESULT_NO_EFFECT = 2,   // "It won't have any effect."
+    DS_BMENU_RESULT_CANT_USE = 3,    // blocked (box full, trainer battle, trapped)
+    DS_BMENU_RESULT_BAD_TARGET = 4,  // invalid party choice
+};
+
+// Implemented in dualscreen_bridge.c: the pending-choice mailbox.
+// Consumes the armed takeover intent (1 bag, 2 party); FALSE when not armed
+// (or the arm expired), in which case the classic GBA menu must open.
+u32 DualScreen_TakeBattleTakeover(u32 mode);
+// The controller reports entering/leaving its bottom-screen wait state.
+void DualScreen_SetBattleMenuOpen(u32 mode, u32 caseId, u32 battler);
+void DualScreen_ClearBattleMenu(void);
+// Snapshot access: current wait mode (0/1/2) plus details.
+u32 DualScreen_BattleMenuInfo(u32 *caseId, u32 *battler, u32 *result, u32 *seq);
+// Polls (and consumes) a choice submitted from the bottom screen.
+u32 DualScreen_TakeBattleChoice(s32 *a, s32 *b);
+// Reports a rejected submission; the wait state stays open.
+void DualScreen_SetBattleMenuResult(u32 result);
+
+// Implemented in item_use.c: applies one battle-bag item exactly as the GBA
+// bag + party menu would (validate, run the item effect table, consume the
+// item, refresh the healthbox), without opening either menu. Returns a
+// DS_BMENU_RESULT_* code; on DS_BMENU_RESULT_USED the caller returns the
+// item id to the battle engine, whose own scripts (ball throw, "used item"
+// message, run-away) then run unchanged.
+u32 DualScreen_UseBattleItem(u16 itemId, s32 targetPartyId);
+
+// Implemented in party_menu.c: the battle-order bookkeeping that
+// TrySwitchInPokemon performs for a switch choice, for a mon given as a
+// field party index.
+void DualScreen_BattleSwitchOrder(u8 monId);
+
 #endif // GUARD_PLATFORM_DUALSCREEN_H

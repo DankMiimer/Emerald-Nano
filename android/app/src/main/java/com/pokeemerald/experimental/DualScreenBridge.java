@@ -53,8 +53,52 @@ public final class DualScreenBridge {
     public static final int SETTING_FF_AUDIO = 12;
     public static final int SETTING_VOLUME = 5;
 
+    /**
+     * Renders a bag item's 24x24 icon into ARGB_8888 pixels (row-major,
+     * length 24*24), decoded from the game's own icon data. Returns null
+     * for ITEM_NONE or out-of-range ids.
+     */
+    public static native int[] nativeGetItemIcon(int itemId);
+
+    /**
+     * The in-game description text for an item, decoded to a single line
+     * (callers re-wrap to fit). Returns null for invalid ids.
+     */
+    public static native String nativeGetItemDescription(int itemId);
+
+    /**
+     * A party menu slot box as ARGB pixels, composed from the game's own
+     * tileset/tilemaps. Kinds: 0 main (80x56), 1 main no-HP for eggs,
+     * 2 wide (144x24), 3 wide no-HP, 4 wide empty. Pass fainted=1 for the
+     * game's fainted recolor. Static data; fetch once per (kind, fainted).
+     */
+    public static native int[] nativeGetPartySlot(int kind, int fainted);
+
+    /**
+     * The party menu's full 240x160 background layer as ARGB_8888 pixels
+     * (row-major), composed from the game's own tileset/tilemap/palette
+     * (graphics/party_menu/bg.*). Static data; fetch once.
+     */
+    public static native int[] nativeGetPartyBgImage();
+
+    /**
+     * The party menu status tags: 8 x 32x8 ARGB pixels, tag-major, in
+     * sheet order PSN, PAR, SLP, FRZ, BRN, PKRS, FNT, blank.
+     */
+    public static native int[] nativeGetStatusIcons();
+
+    /** The party menu's held-item marks: 2 x 8x8 ARGB (item, mail). */
+    public static native int[] nativeGetHoldIcons();
+
     /** All 8 badge sprites: 8 x 16x16 ARGB pixels, badge-major. */
     public static native int[] nativeGetBadges();
+
+    /**
+     * The summary screen's move-type icons: 18 types x 32x16 ARGB pixels,
+     * type-major, decoded from the game's own sheet with the palette each
+     * type uses in the summary screen. Static data; fetch once.
+     */
+    public static native int[] nativeGetTypeIcons();
 
     /** The player's 64x64 trainer front pic (gender 0 = Brendan, 1 = May). */
     public static native int[] nativeGetTrainerPic(int gender);
@@ -66,4 +110,28 @@ public final class DualScreenBridge {
 
     /** Persists to the port's config file. */
     public static native void nativeSetPlatformSetting(int setting, int value);
+
+    /**
+     * Arms the bottom-screen battle takeover right before key-walking the
+     * action cursor to BAG (mode 1) or POKéMON (mode 2): the player battle
+     * controller then waits for {@link #nativeBattleSubmit} instead of
+     * opening the GBA bag/party menu, and the battle stays on the top
+     * screen. Mode 0 disarms; an arm expires on its own after ~4 seconds.
+     */
+    public static native void nativeBattleArm(int mode);
+
+    /**
+     * Submits the pending battle choice. Bag wait: a = item id, b = target
+     * party slot (-1 when the item needs no target). Party wait: a = party
+     * slot. a = -1 cancels back to the action menu.
+     */
+    public static native void nativeBattleSubmit(int a, int b);
+
+    /**
+     * How an item can be used from the battle bag: 0 not usable, 1 ball,
+     * 2 medicine (pick a target mon), 3 self/no target (X items),
+     * 4 escape item (wild battles only), 5 PP restore (pick a target mon).
+     * Static per item id; cacheable.
+     */
+    public static native int nativeGetItemBattleCategory(int itemId);
 }

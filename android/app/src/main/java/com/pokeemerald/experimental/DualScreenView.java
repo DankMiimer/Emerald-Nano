@@ -53,6 +53,32 @@ public final class DualScreenView extends View {
     private static final int HP_YELLOW = 0xFFF8B050;
     private static final int HP_RED = 0xFFF05868;
 
+    // Party menu palette: bank 3 of the game's party bg palette, plus the
+    // gender and HP bar recolors the game loads into it (data/party_menu.h).
+    private static final int PARTY_TEXT = 0xFFF8F8F8;
+    private static final int PARTY_TEXT_SHADOW = 0xFF707070;
+    private static final int PARTY_MALE = 0xFF40C8F8;
+    private static final int PARTY_MALE_SHADOW = 0xFF006090;
+    private static final int PARTY_FEMALE = 0xFFF89890;
+    private static final int PARTY_FEMALE_SHADOW = 0xFF984038;
+    private static final int[] PARTY_HP_TOP = {0xFF70F8A8, 0xFFF8E038, 0xFFF87030};
+    private static final int[] PARTY_HP_BODY = {0xFF58D080, 0xFFC8A808, 0xFFC03800};
+    // The party slots' blue box gradient, reused for the summary-style detail view.
+    private static final int SUMMARY_BLUE = 0xFF3890D8;
+    private static final int SUMMARY_BLUE_LIGHT = 0xFF80C0D8;
+    private static final int SUMMARY_BLUE_DARK = 0xFF2878B0;
+
+    // Content backdrops sampled from the GBA screens' own bg art: the bag
+    // screen's slate wallpaper (graphics/bag/menu.png), plus the party
+    // menu's gray-green tones (graphics/party_menu/bg.png) as a fallback
+    // when the real decoded bg layer is unavailable. The mint Pokenav
+    // chrome only frames the content (tab bar).
+    private static final int PARTY_BG_BASE = 0xFF7B9C73;
+    private static final int PARTY_BG_WEAVE = 0xFF4A4A62;
+    private static final int BAG_BG_BASE = 0xFF626273;
+    private static final int BAG_BG_WEAVE = 0xFF293941;
+    private static final int LIST_PANEL = 0xFFF8F8F0; // bag's light list window
+
     private static final class MapEntry {
         int id, x, y, w, h;
         String name = "";
@@ -69,18 +95,64 @@ public final class DualScreenView extends View {
     private final Paint paint = new Paint();
     private final Paint pixelPaint = new Paint();
     private final SparseArray<Bitmap> iconCache = new SparseArray<>();
+    private final SparseArray<Bitmap> itemIconCache = new SparseArray<>();
+    private final SparseArray<String> itemDescCache = new SparseArray<>();
+    private final SparseArray<Bitmap> partySlotCache = new SparseArray<>();
+    private Bitmap[] statusIcons;
+    private Bitmap[] holdIcons;
+    private Bitmap[] typeIcons;
     private DualScreenState state = new DualScreenState();
     private int tab = TAB_PARTY;
     private int bagPocket;
+    private float bagScroll;
+    private float bagTouchDownY;
+    private float bagScrollStart;
+    private boolean bagDragging;
+    private final int[] bagSelected = new int[5]; // remembered per pocket
+    // List geometry from the last draw, for touch hit-testing.
+    private float bagListTop;
+    private float bagListBottom;
+    private float bagRowH = 1;
     private int detailMon = -1; // party index shown in the detail view, -1 = grid
     private final RectF[] partyCards = {new RectF(), new RectF(), new RectF(),
                                         new RectF(), new RectF(), new RectF()};
     private java.util.List<MapEntry> mapEntries;
     private Bitmap regionMap;
+    private Bitmap partyBg;
     private final RectF[] battleButtons = {new RectF(), new RectF(), new RectF(), new RectF()};
     private final RectF battleCancel = new RectF();
     private int battleButtonsMenu; // which menu the drawn buttons belong to
     private long lastKeyQueueMs;
+    private int battlePressedCmd = -1; // command button in its pressed-in state
+    private final Runnable battlePressReset = new Runnable() {
+        @Override
+        public void run() {
+            battlePressedCmd = -1;
+            invalidate();
+        }
+    };
+
+    // Battle bag/party takeover (Gen 4-style bottom-screen menus).
+    private int battlePanel; // 0 none, 1 bag, 2 switch party, 3 item-target party
+    private int pendingItemId;
+    private long battleArmMs;    // when we last armed the takeover
+    private long battleCloseMs;  // when we last cancelled/submitted a close
+    private int lastSubSeq;
+    private String battleNotice = "";
+    private long battleNoticeMs;
+    private int battleBagPocket; // index into battleVisiblePockets()
+    private float battleBagScroll;
+    private float battleBagTouchDownY;
+    private float battleBagScrollStart;
+    private boolean battleBagDragging;
+    private int battleBagSelected = -1;
+    private float battleBagListTop;
+    private float battleBagListBottom;
+    private float battleBagRowH = 1;
+    private final RectF battleUseButton = new RectF();
+    private final RectF[] battlePartyCards = {new RectF(), new RectF(), new RectF(),
+                                              new RectF(), new RectF(), new RectF()};
+    private final SparseArray<Integer> battleCategoryCache = new SparseArray<>();
 
     public DualScreenView(Context context) {
         super(context);
@@ -95,7 +167,39 @@ public final class DualScreenView extends View {
 
     public void setState(DualScreenState next) {
         state = next;
+        syncBattlePanel();
         invalidate();
+    }
+
+    /** Reconciles the local battle bag/party panel with the engine's wait state. */
+    private void syncBattlePanel() {
+        if (!state.inBattle) {
+            battlePanel = 0;
+            return;
+        }
+        if (state.battleSubSeq != lastSubSeq) {
+            lastSubSeq = state.battleSubSeq;
+            switch (state.battleSubResult) {
+            case 2:  battleNotice = "It won't have any effect."; break;
+            case 3:  battleNotice = "It can't be used now."; break;
+            case 4:  battleNotice = "Can't choose that POKéMON."; break;
+            default: battleNotice = ""; break;
+            }
+            if (!battleNotice.isEmpty()) {
+                battleNoticeMs = System.currentTimeMillis();
+            }
+        }
+        long now = System.currentTimeMillis();
+        if (battlePanel == 0 && state.battleSub != 0 && now - battleCloseMs > 1500) {
+            // The engine is waiting on us but our panel closed (race); reopen.
+            battlePanel = state.battleSub == 1 ? 1 : 2;
+        } else if (battlePanel != 0 && state.battleSub == 0
+                && (now - battleArmMs > 2500 || now - battleCloseMs < 1500)) {
+            // The choice landed, was cancelled, or the takeover never engaged.
+            // (battleCloseMs is stamped on every submission, so an accepted
+            // choice closes the panel as soon as the wait state clears.)
+            battlePanel = 0;
+        }
     }
 
     private GbaFont font() {
@@ -119,6 +223,186 @@ public final class DualScreenView extends View {
         return bitmap;
     }
 
+    private Bitmap itemIcon(int itemId) {
+        Bitmap cached = itemIconCache.get(itemId);
+        if (cached != null) {
+            return cached;
+        }
+        int[] pixels = DualScreenBridge.nativeGetItemIcon(itemId);
+        if (pixels == null || pixels.length != 24 * 24) {
+            return null;
+        }
+        Bitmap bitmap = Bitmap.createBitmap(pixels, 24, 24, Bitmap.Config.ARGB_8888);
+        itemIconCache.put(itemId, bitmap);
+        return bitmap;
+    }
+
+    private String itemDescription(int itemId) {
+        String cached = itemDescCache.get(itemId);
+        if (cached != null) {
+            return cached;
+        }
+        String desc = DualScreenBridge.nativeGetItemDescription(itemId);
+        if (desc == null) {
+            desc = "";
+        }
+        itemDescCache.put(itemId, desc);
+        return desc;
+    }
+
+    /** A party slot box bitmap; kinds as in nativeGetPartySlot. */
+    private Bitmap partySlot(int kind, boolean fainted) {
+        int key = kind * 2 + (fainted ? 1 : 0);
+        Bitmap cached = partySlotCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        int w = kind <= 1 ? 80 : 144;
+        int h = kind <= 1 ? 56 : 24;
+        int[] pixels = DualScreenBridge.nativeGetPartySlot(kind, fainted ? 1 : 0);
+        if (pixels == null || pixels.length != w * h) {
+            return null;
+        }
+        Bitmap bitmap = Bitmap.createBitmap(pixels, w, h, Bitmap.Config.ARGB_8888);
+        partySlotCache.put(key, bitmap);
+        return bitmap;
+    }
+
+    /**
+     * The box behind a party staircase slot: the game's own tile art, with
+     * a flat rounded card as fallback when the tile art is unavailable.
+     * Dimmed covers both fainted and untappable slots.
+     */
+    private void drawSlotChrome(Canvas canvas, RectF slot, int kind, boolean dimmed) {
+        Bitmap slotGfx = partySlot(kind, dimmed);
+        if (slotGfx != null) {
+            canvas.drawBitmap(slotGfx, null, slot, pixelPaint);
+            return;
+        }
+        paint.setColor(kind == 4 ? 0x50FFFFFF : dimmed ? 0xFF8894A0 : SUMMARY_BLUE);
+        canvas.drawRoundRect(slot, 10, 10, paint);
+    }
+
+    /** One of the game's 32x8 status tags (PSN, PAR, SLP, FRZ, BRN, PKRS, FNT). */
+    private Bitmap statusIcon(int index) {
+        if (statusIcons == null) {
+            int[] pixels = DualScreenBridge.nativeGetStatusIcons();
+            if (pixels == null || pixels.length != 8 * 32 * 8) {
+                return null;
+            }
+            statusIcons = new Bitmap[8];
+            for (int i = 0; i < 8; i++) {
+                int[] one = new int[32 * 8];
+                System.arraycopy(pixels, i * 32 * 8, one, 0, 32 * 8);
+                statusIcons[i] = Bitmap.createBitmap(one, 32, 8, Bitmap.Config.ARGB_8888);
+            }
+        }
+        return index >= 0 && index < 8 ? statusIcons[index] : null;
+    }
+
+    /** The game's 8x8 held-item mark (0) or mail mark (1). */
+    private Bitmap holdIcon(int index) {
+        if (holdIcons == null) {
+            int[] pixels = DualScreenBridge.nativeGetHoldIcons();
+            if (pixels == null || pixels.length != 2 * 8 * 8) {
+                return null;
+            }
+            holdIcons = new Bitmap[2];
+            for (int i = 0; i < 2; i++) {
+                int[] one = new int[64];
+                System.arraycopy(pixels, i * 64, one, 0, 64);
+                holdIcons[i] = Bitmap.createBitmap(one, 8, 8, Bitmap.Config.ARGB_8888);
+            }
+        }
+        return index >= 0 && index < 2 ? holdIcons[index] : null;
+    }
+
+    /** One of the game's 32x16 move-type icons, or null if unavailable. */
+    private Bitmap typeIconBitmap(int type) {
+        if (typeIcons == null) {
+            int[] pixels = DualScreenBridge.nativeGetTypeIcons();
+            if (pixels == null || pixels.length != 18 * 32 * 16) {
+                return null;
+            }
+            typeIcons = new Bitmap[18];
+            for (int i = 0; i < 18; i++) {
+                int[] one = new int[32 * 16];
+                System.arraycopy(pixels, i * 32 * 16, one, 0, 32 * 16);
+                typeIcons[i] = Bitmap.createBitmap(one, 32, 16, Bitmap.Config.ARGB_8888);
+            }
+        }
+        return type >= 0 && type < 18 ? typeIcons[type] : null;
+    }
+
+    /**
+     * Draws the game's own type icon (2:1 aspect, so width is 2x height),
+     * falling back to the old text chip if the graphics are unavailable.
+     */
+    private void drawTypeIcon(Canvas canvas, int type, float left, float top, float height) {
+        Bitmap icon = typeIconBitmap(type);
+        if (icon == null) {
+            drawTypeBadge(canvas, type, left, top, height);
+            return;
+        }
+        canvas.drawBitmap(icon, null,
+                new RectF(left, top, left + height * 2, top + height), pixelPaint);
+    }
+
+    /**
+     * Effectiveness marker on a move card: up triangle = super effective,
+     * down triangle = not very effective, cross = no effect; nothing for
+     * normal effectiveness or no data. All Canvas shapes on a white chip.
+     */
+    private void drawEffMarker(Canvas canvas, int eff, float cx, float cy, float r) {
+        if (eff != 0 && eff != 1 && eff != 3) {
+            return;
+        }
+        paint.setColor(PANEL_WHITE);
+        canvas.drawCircle(cx, cy, r * 1.4f, paint);
+        paint.setColor(0x30000000);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(2);
+        canvas.drawCircle(cx, cy, r * 1.4f, paint);
+        paint.setStyle(Paint.Style.FILL);
+        if (eff == 0) {
+            paint.setColor(0xFF888E96);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(r * 0.5f);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            canvas.drawLine(cx - r * 0.65f, cy - r * 0.65f, cx + r * 0.65f, cy + r * 0.65f, paint);
+            canvas.drawLine(cx - r * 0.65f, cy + r * 0.65f, cx + r * 0.65f, cy - r * 0.65f, paint);
+            paint.setStrokeCap(Paint.Cap.BUTT);
+            paint.setStyle(Paint.Style.FILL);
+        } else {
+            float dir = eff == 3 ? -1 : 1; // point up for super, down for not-very
+            android.graphics.Path tri = new android.graphics.Path();
+            tri.moveTo(cx, cy + dir * r * 0.9f);
+            tri.lineTo(cx - r * 0.85f, cy - dir * r * 0.65f);
+            tri.lineTo(cx + r * 0.85f, cy - dir * r * 0.65f);
+            tri.close();
+            paint.setColor(eff == 3 ? 0xFFE86828 : 0xFF5888D8);
+            canvas.drawPath(tri, paint);
+        }
+    }
+
+    private static int blendColor(int a, int b, float t) {
+        int ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+        int br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+        return 0xFF000000 | ((int) (ar + (br - ar) * t) << 16)
+                | ((int) (ag + (bg - ag) * t) << 8) | (int) (ab + (bb - ab) * t);
+    }
+
+    /** Index into the status tag sheet, or -1 for none (mirrors GetMonAilment). */
+    private int statusIconIndex(long status, int hp) {
+        if (hp == 0) return 6;              // FNT
+        if ((status & 0x7) != 0) return 2;  // SLP
+        if ((status & 0x88) != 0) return 0; // PSN, incl. toxic
+        if ((status & 0x10) != 0) return 4; // BRN
+        if ((status & 0x20) != 0) return 3; // FRZ
+        if ((status & 0x40) != 0) return 1; // PAR
+        return -1;
+    }
+
     private float tabBarHeight() {
         return getHeight() * 0.105f;
     }
@@ -129,7 +413,14 @@ public final class DualScreenView extends View {
         return new RectF(index * w, top, (index + 1) * w, getHeight());
     }
 
-    private static final String[] POCKET_NAMES = {"ITEMS", "BALLS", "TM-HM", "BERRIES", "KEY"};
+    private static final String[] POCKET_NAMES = {"ITEMS", "POKé BALLS", "TMs-HMs", "BERRIES", "KEY ITEMS"};
+    // Per-pocket accent colors, like the GBA bag's pocket theming.
+    private static final int[] POCKET_ACCENTS = {
+        0xFFE06858, 0xFFE8A030, 0xFF58A868, 0xFF5880C8, 0xFFA068C8
+    };
+    private static final int[] POCKET_ACCENTS_DARK = {
+        0xFFA84840, 0xFFA87828, 0xFF3C7A48, 0xFF405E98, 0xFF744C94
+    };
 
     private RectF pocketRect(int index) {
         float w = getWidth() / (float) POCKET_NAMES.length;
@@ -139,6 +430,37 @@ public final class DualScreenView extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        // Battle bag panel: drag to scroll, tap to select/use.
+        if (state.inBattle && battlePanel == 1) {
+            switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                battleBagTouchDownY = event.getY();
+                battleBagScrollStart = battleBagScroll;
+                battleBagDragging = false;
+                break;
+            case MotionEvent.ACTION_MOVE:
+                if (battleBagDragging || Math.abs(event.getY() - battleBagTouchDownY) > 24) {
+                    battleBagDragging = true;
+                    battleBagScroll = Math.max(0, Math.min(battleBagMaxScroll(),
+                            battleBagScrollStart + (battleBagTouchDownY - event.getY())));
+                    invalidate();
+                }
+                return true;
+            case MotionEvent.ACTION_UP:
+                if (!battleBagDragging) {
+                    handleBattleBagTouch(event.getX(), event.getY());
+                }
+                return true;
+            }
+            return true;
+        }
+        // Battle party panel (switch target or item target): plain taps.
+        if (state.inBattle && (battlePanel == 2 || battlePanel == 3)) {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                handleBattlePartyTouch(event.getX(), event.getY());
+            }
+            return true;
+        }
         // Settings list: drag to scroll, tap to toggle.
         if (tab == TAB_SETTINGS && !state.inBattle) {
             switch (event.getActionMasked()) {
@@ -171,6 +493,38 @@ public final class DualScreenView extends View {
             }
             return true;
         }
+        // Bag list: drag to scroll, tap to select an item.
+        if (tab == TAB_BAG && !state.inBattle && state.inGame) {
+            switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                bagTouchDownY = event.getY();
+                bagScrollStart = bagScroll;
+                bagDragging = false;
+                break;
+            case MotionEvent.ACTION_MOVE:
+                if (bagDragging || Math.abs(event.getY() - bagTouchDownY) > 24) {
+                    bagDragging = true;
+                    bagScroll = Math.max(0, Math.min(bagMaxScroll(),
+                            bagScrollStart + (bagTouchDownY - event.getY())));
+                    invalidate();
+                }
+                return true;
+            case MotionEvent.ACTION_UP:
+                if (!bagDragging) {
+                    for (int i = 0; i < TAB_NAMES.length; i++) {
+                        if (tabRect(i).contains(event.getX(), event.getY())) {
+                            tab = i;
+                            detailMon = -1;
+                            invalidate();
+                            return true;
+                        }
+                    }
+                    handleBagTouch(event.getX(), event.getY());
+                }
+                return true;
+            }
+            return true;
+        }
         if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
             if (state.inBattle) {
                 handleBattleTouch(event.getX(), event.getY());
@@ -194,15 +548,6 @@ public final class DualScreenView extends View {
                     if (partyCards[i].contains(event.getX(), event.getY())
                             && i < state.party.size()) {
                         detailMon = i;
-                        invalidate();
-                        return true;
-                    }
-                }
-            }
-            if (tab == TAB_BAG) {
-                for (int i = 0; i < POCKET_NAMES.length; i++) {
-                    if (pocketRect(i).contains(event.getX(), event.getY())) {
-                        bagPocket = i;
                         invalidate();
                         return true;
                     }
@@ -246,8 +591,181 @@ public final class DualScreenView extends View {
         for (int i = 0; i < 4; i++) {
             if (battleButtons[i].contains(x, y) && !battleButtons[i].isEmpty()) {
                 int cursor = state.battleMenu == 1 ? state.actionCursor : state.moveCursor;
+                if (state.battleMenu == 1 && i == 3 && state.battleKind == 1) {
+                    return; // RUN is disabled in trainer battles
+                }
                 lastKeyQueueMs = now;
+                if (state.battleMenu == 1) {
+                    // Pressed-in visual on the command buttons.
+                    battlePressedCmd = i;
+                    removeCallbacks(battlePressReset);
+                    postDelayed(battlePressReset, 220);
+                    invalidate();
+                }
+                if (state.battleMenu == 1 && i == 1 && state.battleCanUseItems) {
+                    // BAG: arm the takeover, then walk the cursor as usual.
+                    // The battle bag opens down here instead of the GBA bag.
+                    battlePanel = 1;
+                    battleBagPocket = 0;
+                    battleBagSelected = -1;
+                    battleBagScroll = 0;
+                    battleArmMs = now;
+                    DualScreenBridge.nativeBattleArm(1);
+                } else if (state.battleMenu == 1 && i == 2) {
+                    // POKéMON: same, with the party staircase down here.
+                    battlePanel = 2;
+                    battleArmMs = now;
+                    DualScreenBridge.nativeBattleArm(2);
+                }
                 queueGridSelection(cursor, i, true);
+                return;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Battle bag/party takeover panels
+    // ------------------------------------------------------------------
+
+    /** Game bag pockets usable in battle, in tab order (balls only when legal). */
+    private int[] battleVisiblePockets() {
+        return state.battleCanCatch ? new int[] {0, 1, 3} : new int[] {0, 3};
+    }
+
+    private int itemBattleCategory(int itemId) {
+        Integer cached = battleCategoryCache.get(itemId);
+        if (cached == null) {
+            cached = DualScreenBridge.nativeGetItemBattleCategory(itemId);
+            battleCategoryCache.put(itemId, cached);
+        }
+        return cached;
+    }
+
+    /** The current battle pocket's items, filtered down to battle-usable ones. */
+    private java.util.List<DualScreenState.BagItem> battleBagItems() {
+        java.util.List<DualScreenState.BagItem> out = new java.util.ArrayList<>();
+        int[] pockets = battleVisiblePockets();
+        int pocket = pockets[Math.min(battleBagPocket, pockets.length - 1)];
+        if (pocket < state.bag.size()) {
+            for (DualScreenState.BagItem item : state.bag.get(pocket)) {
+                int category = itemBattleCategory(item.id);
+                if (category <= 0) continue;
+                if (category == 4 && state.battleKind == 1) continue; // escape items: wild only
+                out.add(item);
+            }
+        }
+        return out;
+    }
+
+    private float battleBagMaxScroll() {
+        return Math.max(0, battleBagItems().size() * battleBagRowH
+                - (battleBagListBottom - battleBagListTop));
+    }
+
+    private RectF battlePocketRect(int index, int count) {
+        float w = getWidth() / (float) count;
+        float h = getHeight() * 0.095f;
+        return new RectF(index * w, 0, (index + 1) * w, h);
+    }
+
+    /** Closes the open panel, cancelling the engine-side wait if it engaged. */
+    private void cancelBattlePanel() {
+        if (state.battleSub != 0) {
+            DualScreenBridge.nativeBattleSubmit(-1, -1);
+        } else {
+            DualScreenBridge.nativeBattleArm(0);
+        }
+        battleCloseMs = System.currentTimeMillis();
+        battlePanel = 0;
+        invalidate();
+    }
+
+    private void handleBattleBagTouch(float x, float y) {
+        int[] pockets = battleVisiblePockets();
+        for (int i = 0; i < pockets.length; i++) {
+            if (battlePocketRect(i, pockets.length).contains(x, y)) {
+                if (battleBagPocket != i) {
+                    battleBagPocket = i;
+                    battleBagScroll = 0;
+                    battleBagSelected = -1;
+                }
+                invalidate();
+                return;
+            }
+        }
+        if (battleCancel.contains(x, y)) {
+            cancelBattlePanel();
+            return;
+        }
+        java.util.List<DualScreenState.BagItem> items = battleBagItems();
+        if (!battleUseButton.isEmpty() && battleUseButton.contains(x, y)
+                && battleBagSelected >= 0 && battleBagSelected < items.size()) {
+            if (state.battleSub != 1) {
+                return; // the engine hasn't reached its wait state yet
+            }
+            DualScreenState.BagItem sel = items.get(battleBagSelected);
+            int category = itemBattleCategory(sel.id);
+            if (category == 2 || category == 5) {
+                pendingItemId = sel.id; // needs a target mon: second step
+                battlePanel = 3;
+            } else {
+                battleCloseMs = System.currentTimeMillis();
+                DualScreenBridge.nativeBattleSubmit(sel.id, -1);
+            }
+            invalidate();
+            return;
+        }
+        if (y >= battleBagListTop && y < battleBagListBottom && battleBagRowH > 0) {
+            int index = (int) ((y - battleBagListTop + battleBagScroll) / battleBagRowH);
+            if (index >= 0 && index < items.size()) {
+                battleBagSelected = index;
+                invalidate();
+            }
+        }
+    }
+
+    /** Whether a staircase slot is tappable in the current panel. */
+    private boolean battlePartySlotEnabled(int i) {
+        DualScreenState.Mon mon = state.party.get(i);
+        if (battlePanel == 3) {
+            // Item target: anything but an egg; the engine's own "won't have
+            // any effect" rejection covers the rest (e.g. Revive on healthy).
+            return !mon.isEgg;
+        }
+        if (state.battleSubCase != 0) {
+            return false; // engine says no switch can happen (trapped etc.)
+        }
+        return !mon.isEgg && mon.hp > 0
+                && i != state.battleActive[0] && i != state.battleActive[1]
+                && i != state.battlePrevSel;
+    }
+
+    private void handleBattlePartyTouch(float x, float y) {
+        if (battleCancel.contains(x, y)) {
+            if (battlePanel == 3) {
+                battlePanel = 1; // back to the bag; the wait state stays open
+                invalidate();
+            } else {
+                cancelBattlePanel();
+            }
+            return;
+        }
+        for (int i = 0; i < battlePartyCards.length && i < state.party.size(); i++) {
+            if (battlePartyCards[i].contains(x, y)) {
+                if (!battlePartySlotEnabled(i)) {
+                    return;
+                }
+                if (battlePanel == 3) {
+                    if (state.battleSub != 1) return;
+                    battleCloseMs = System.currentTimeMillis();
+                    DualScreenBridge.nativeBattleSubmit(pendingItemId, i);
+                    battlePanel = 1; // closes via sync once the engine accepts
+                } else {
+                    if (state.battleSub != 2) return;
+                    battleCloseMs = System.currentTimeMillis();
+                    DualScreenBridge.nativeBattleSubmit(i, -1);
+                }
+                invalidate();
                 return;
             }
         }
@@ -266,6 +784,47 @@ public final class DualScreenView extends View {
             for (float x = step / 2; x < getWidth(); x += step) {
                 canvas.drawCircle(x, y, radius, paint);
             }
+        }
+    }
+
+    /**
+     * Covers the content area with a GBA-screen-flavored backdrop (base tone
+     * plus a faint diagonal weave, both sampled from the game's bg art), so
+     * the mint Pokenav chrome stays an outer frame.
+     */
+    private void drawContentBackdrop(Canvas canvas, float bottom, int base, int weave) {
+        paint.setColor(base);
+        canvas.drawRect(0, 0, getWidth(), bottom, paint);
+        paint.setColor((weave & 0x00FFFFFF) | 0x30000000);
+        float step = getWidth() / 26f;
+        paint.setStrokeWidth(step * 0.16f);
+        for (float x = -bottom; x < getWidth(); x += step) {
+            canvas.drawLine(x, 0, x + bottom, bottom, paint);
+        }
+    }
+
+    /** The party menu's real 240x160 background layer, decoded once. */
+    private Bitmap partyBgBitmap() {
+        if (partyBg == null) {
+            int[] pixels = DualScreenBridge.nativeGetPartyBgImage();
+            if (pixels != null && pixels.length == 240 * 160) {
+                partyBg = Bitmap.createBitmap(pixels, 240, 160, Bitmap.Config.ARGB_8888);
+            }
+        }
+        return partyBg;
+    }
+
+    /**
+     * The party screens' backdrop: the game's own party menu bg layer
+     * (tiles + tilemap + palette, composed over the bridge), scaled to the
+     * content area. Falls back to the sampled base tone if unavailable.
+     */
+    private void drawPartyBackdrop(Canvas canvas, float bottom) {
+        Bitmap bg = partyBgBitmap();
+        if (bg != null) {
+            canvas.drawBitmap(bg, null, new RectF(0, 0, getWidth(), bottom), pixelPaint);
+        } else {
+            drawContentBackdrop(canvas, bottom, PARTY_BG_BASE, PARTY_BG_WEAVE);
         }
     }
 
@@ -343,12 +902,21 @@ public final class DualScreenView extends View {
                 scale, TEXT_DARK, TEXT_SHADOW);
     }
 
-    private int hpColor(int hp, int maxHp) {
-        if (maxHp <= 0) return HP_GREEN;
+    /** 0 green, 1 yellow, 2 red, with the game's HP bar thresholds. */
+    private int hpBarLevel(int hp, int maxHp) {
+        if (maxHp <= 0) return 0;
         float ratio = hp / (float) maxHp;
-        if (ratio > 0.5f) return HP_GREEN;
-        if (ratio > 0.2f) return HP_YELLOW;
-        return HP_RED;
+        if (ratio > 0.5f) return 0;
+        if (ratio > 0.2f) return 1;
+        return 2;
+    }
+
+    private int hpColor(int hp, int maxHp) {
+        switch (hpBarLevel(hp, maxHp)) {
+        case 0:  return HP_GREEN;
+        case 1:  return HP_YELLOW;
+        default: return HP_RED;
+        }
     }
 
     private void drawHpBar(Canvas canvas, float left, float top, float width, float height, int hp, int maxHp) {
@@ -424,6 +992,13 @@ public final class DualScreenView extends View {
         drawTabBar(canvas);
     }
 
+    /**
+     * The Emerald party menu: lead mon in the big slot at upper left, the
+     * rest stacked in wide slots on the right. All geometry comes from the
+     * game's own tables (sPartyMenuSpriteCoords / sPartyBoxInfoRects /
+     * window templates in src/data/party_menu.h), in GBA pixels on the
+     * 240x160 screen, integer-scaled and centered like the map tab.
+     */
     private void drawParty(Canvas canvas) {
         if (detailMon >= 0 && detailMon < state.party.size()) {
             drawPartyDetail(canvas, state.party.get(detailMon));
@@ -431,156 +1006,276 @@ public final class DualScreenView extends View {
         }
         GbaFont f = font();
         float contentHeight = getHeight() - tabBarHeight();
-        float pad = getWidth() * 0.012f;
-        float rowH = (contentHeight - pad * 4) / 3;
-        float colW = (getWidth() - pad * 3) / 2;
-        float scale = rowH / (GbaFont.LINE_HEIGHT * 4.6f);
+        drawPartyBackdrop(canvas, contentHeight);
+        int s = (int) Math.min(getWidth() / 240f, contentHeight / 160f);
+        if (s < 1) s = 1;
+        float ox = (getWidth() - 240f * s) / 2f;
+        float oy = (contentHeight - 160f * s) / 2f;
+        float nameScale = s * 0.8f;
+        float subScale = s * 0.65f;
 
         for (int i = 0; i < 6; i++) {
-            float left = pad + (i % 2) * (colW + pad);
-            float top = pad + (i / 2) * (rowH + pad);
-            RectF card = new RectF(left, top, left + colW, top + rowH);
-            partyCards[i].set(card);
-            paint.setColor(i < state.party.size() ? PANEL_WHITE : 0x66FFFFFF);
-            canvas.drawRoundRect(card, 10, 10, paint);
-            paint.setColor(i < state.party.size() ? BAR_BORDER : 0x66A88848);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(3);
-            canvas.drawRoundRect(card, 10, 10, paint);
-            paint.setStyle(Paint.Style.FILL);
-            if (i >= state.party.size()) continue;
-            DualScreenState.Mon mon = state.party.get(i);
+            boolean present = i < state.party.size();
+            DualScreenState.Mon mon = present ? state.party.get(i) : null;
+            boolean lead = i == 0;
+            boolean fainted = present && !mon.isEgg && mon.hp == 0;
+            int kind = !present ? 4 : lead ? (mon.isEgg ? 1 : 0) : (mon.isEgg ? 3 : 2);
+            float wx = ox + (lead ? 8 : 96) * s;
+            float wy = oy + (lead ? 24 : 8 + 24 * (i - 1)) * s;
+            RectF slot = new RectF(wx, wy, wx + (lead ? 80 : 144) * s, wy + (lead ? 56 : 24) * s);
+            partyCards[i].set(slot);
+            drawSlotChrome(canvas, slot, kind, fainted);
+            if (!present || f == null) continue;
 
-            float inset = rowH * 0.12f;
-            float iconSize = rowH * 0.52f;
+            // Mon icon and held-item mark, at the game's sprite anchors.
             Bitmap icon = mon.isEgg ? null : monIcon(mon.species);
+            float ix = lead ? ox : wx - 8 * s;
+            float iy = lead ? wy : wy - 6 * s;
             if (icon != null) {
-                canvas.drawBitmap(icon, null,
-                        new RectF(card.left + inset, card.top + inset,
-                                  card.left + inset + iconSize, card.top + inset + iconSize), pixelPaint);
+                canvas.drawBitmap(icon, null, new RectF(ix, iy, ix + 32 * s, iy + 32 * s), pixelPaint);
             }
-            float textLeft = card.left + inset + iconSize + inset;
-            if (f == null) continue;
-
-            String title = mon.isEgg ? "EGG" : mon.nick;
-            f.draw(canvas, title, textLeft, card.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
-
-            if (!mon.isEgg) {
-                String sub = "Lv" + mon.level + (mon.gender == 0 ? " ♂" : mon.gender == 1 ? " ♀" : "");
-                float subScale = scale * 0.85f;
-                f.draw(canvas, sub, textLeft, card.top + inset + GbaFont.LINE_HEIGHT * scale + 4,
-                        subScale, TEXT_DARK, TEXT_SHADOW);
-
-                float barTop = card.top + inset + GbaFont.LINE_HEIGHT * scale * 1.95f;
-                float barH = rowH * 0.075f;
-                drawHpBar(canvas, textLeft, barTop, card.right - inset - textLeft, barH, mon.hp, mon.maxHp);
-
-                String hpText = mon.hp + "/" + mon.maxHp;
-                f.draw(canvas, hpText, textLeft, barTop + barH + 6, subScale, TEXT_DARK, TEXT_SHADOW);
-                String status = statusLabel(mon.status, mon.hp);
-                if (status != null) {
-                    float w = f.measure(status, subScale);
-                    f.draw(canvas, status, card.right - inset - w, barTop + barH + 6,
-                            subScale, HP_RED, TEXT_SHADOW);
+            if (!mon.isEgg && mon.item > 0) {
+                // Mail items get the game's mail mark (ITEM_ORANGE_MAIL..ITEM_RETRO_MAIL).
+                Bitmap mark = holdIcon(mon.item >= 121 && mon.item <= 132 ? 1 : 0);
+                float hx = lead ? ox + 16 * s : wx + 8 * s;
+                float hy = lead ? wy + 22 * s : wy + 16 * s;
+                if (mark != null) {
+                    canvas.drawBitmap(mark, null, new RectF(hx, hy, hx + 8 * s, hy + 8 * s), pixelPaint);
                 }
             }
+
+            String title = mon.isEgg ? "EGG" : mon.nick;
+            float nickX = wx + (lead ? 24 : 22) * s;
+            float nickY = wy + (lead ? 11 : 3) * s;
+            f.draw(canvas, title, nickX, nickY, nameScale, PARTY_TEXT, PARTY_TEXT_SHADOW);
+            if (mon.isEgg) continue;
+
+            // Level and gender give way to the status tag, like in the game.
+            float subY = wy + (lead ? 20 : 12) * s;
+            int statusIdx = statusIconIndex(mon.status, mon.hp);
+            if (statusIdx < 0) {
+                f.draw(canvas, "Lv" + mon.level, wx + (lead ? 32 : 30) * s, subY,
+                        subScale, PARTY_TEXT, PARTY_TEXT_SHADOW);
+                if (mon.gender == 0) {
+                    f.draw(canvas, "♂", wx + (lead ? 64 : 62) * s, subY,
+                            subScale, PARTY_MALE, PARTY_MALE_SHADOW);
+                } else if (mon.gender == 1) {
+                    f.draw(canvas, "♀", wx + (lead ? 64 : 62) * s, subY,
+                            subScale, PARTY_FEMALE, PARTY_FEMALE_SHADOW);
+                }
+            } else {
+                Bitmap tag = statusIcon(statusIdx);
+                float tx = lead ? ox + 34 * s : wx + 24 * s;
+                float ty = lead ? wy + 24 * s : wy + 15 * s;
+                if (tag != null) {
+                    canvas.drawBitmap(tag, null, new RectF(tx, ty, tx + 32 * s, ty + 8 * s), pixelPaint);
+                }
+            }
+
+            // HP bar fill over the groove baked into the slot graphic.
+            float barX = wx + (lead ? 24 : 88) * s;
+            float barY = wy + (lead ? 35 : 10) * s;
+            float fillPx = mon.maxHp > 0 ? 48f * mon.hp / mon.maxHp : 0;
+            if (mon.hp > 0 && fillPx < 1) fillPx = 1;
+            int level = hpBarLevel(mon.hp, mon.maxHp);
+            paint.setColor(PARTY_HP_TOP[level]);
+            canvas.drawRect(barX, barY, barX + fillPx * s, barY + s, paint);
+            paint.setColor(PARTY_HP_BODY[level]);
+            canvas.drawRect(barX, barY + s, barX + fillPx * s, barY + 3 * s, paint);
+
+            String hpText = mon.hp + "/" + mon.maxHp;
+            float hpRight = wx + (lead ? 77 : 141) * s;
+            float hpY = wy + (lead ? 37 : 12) * s;
+            f.draw(canvas, hpText, hpRight - f.measure(hpText, subScale), hpY,
+                    subScale, PARTY_TEXT, PARTY_TEXT_SHADOW);
         }
     }
 
-    private static final String[] STAT_NAMES = {"ATTACK", "DEFENSE", "SPEED", "SP. ATK", "SP. DEF"};
+    // Stat rows in the summary screen's Skills-page order, mapping into
+    // the snapshot's [atk, def, speed, spatk, spdef] array.
+    private static final String[] STAT_NAMES = {"ATTACK", "DEFENSE", "SP. ATK", "SP. DEF", "SPEED"};
+    private static final int[] STAT_ORDER = {0, 1, 3, 4, 2};
 
+    /** A white panel with a blue title strip, like the summary screen pages. */
+    private void drawSummaryPanel(Canvas canvas, RectF box, String label, float stripH, float scale) {
+        RectF inner = new RectF(box);
+        paint.setColor(SUMMARY_BLUE_DARK);
+        canvas.drawRoundRect(box, 12, 12, paint);
+        inner.inset(3, 3);
+        paint.setColor(PANEL_WHITE);
+        canvas.drawRoundRect(inner, 9, 9, paint);
+        paint.setColor(SUMMARY_BLUE);
+        canvas.drawRoundRect(new RectF(inner.left, inner.top, inner.right, inner.top + stripH), 9, 9, paint);
+        canvas.drawRect(new RectF(inner.left, inner.top + stripH / 2, inner.right, inner.top + stripH), paint);
+        GbaFont f = font();
+        if (f != null) {
+            f.draw(canvas, label, inner.left + 14,
+                    inner.top + (stripH - GbaFont.LINE_HEIGHT * scale) / 2,
+                    scale, PARTY_TEXT, SUMMARY_BLUE_DARK);
+        }
+    }
+
+    /** A flat two-tone GBA-style bar: 1/3 highlight on top, body below. */
+    private void drawGbaBar(Canvas canvas, float left, float top, float width, float height,
+                            float fillRatio, int topColor, int bodyColor) {
+        paint.setColor(0xFF505050);
+        canvas.drawRect(left - 2, top - 2, left + width + 2, top + height + 2, paint);
+        paint.setColor(PANEL_WHITE);
+        canvas.drawRect(left, top, left + width, top + height, paint);
+        float fill = width * Math.max(0f, Math.min(1f, fillRatio));
+        if (fill > 0) {
+            paint.setColor(topColor);
+            canvas.drawRect(left, top, left + fill, top + height / 3, paint);
+            paint.setColor(bodyColor);
+            canvas.drawRect(left, top + height / 3, left + fill, top + height, paint);
+        }
+    }
+
+    /** Detail view in the summary screen's language: identity header, Skills page, Moves page. */
     private void drawPartyDetail(Canvas canvas, DualScreenState.Mon mon) {
         GbaFont f = font();
         if (f == null) {
             return;
         }
         float contentHeight = getHeight() - tabBarHeight();
+        drawPartyBackdrop(canvas, contentHeight);
         float pad = getWidth() * 0.025f;
         float scale = getWidth() / 440f;
 
-        // Header: big icon + identity.
-        RectF header = new RectF(pad, pad, getWidth() - pad, contentHeight * 0.30f);
-        paint.setColor(PANEL_WHITE);
+        // Identity header in the party slots' blue box language.
+        RectF header = new RectF(pad, pad, getWidth() - pad, contentHeight * 0.28f);
+        paint.setColor(SUMMARY_BLUE_DARK);
         canvas.drawRoundRect(header, 12, 12, paint);
-        paint.setColor(BAR_BORDER);
+        RectF inner = new RectF(header);
+        inner.inset(4, 4);
+        paint.setColor(SUMMARY_BLUE);
+        canvas.drawRoundRect(inner, 9, 9, paint);
+        paint.setColor(SUMMARY_BLUE_LIGHT);
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(3);
-        canvas.drawRoundRect(header, 12, 12, paint);
+        canvas.drawRoundRect(new RectF(inner.left + 3, inner.top + 3, inner.right - 3, inner.bottom - 3), 7, 7, paint);
         paint.setStyle(Paint.Style.FILL);
 
         float inset = header.height() * 0.14f;
-        float iconSize = header.height() * 0.72f;
+        float iconSize = header.height() * 0.68f;
+        RectF iconRect = new RectF(header.left + inset, header.centerY() - iconSize / 2,
+                header.left + inset + iconSize, header.centerY() + iconSize / 2);
+        paint.setColor(SUMMARY_BLUE_LIGHT);
+        canvas.drawCircle(iconRect.centerX(), iconRect.centerY(), iconSize * 0.62f, paint);
         Bitmap icon = mon.isEgg ? null : monIcon(mon.species);
         if (icon != null) {
-            canvas.drawBitmap(icon, null,
-                    new RectF(header.left + inset, header.centerY() - iconSize / 2,
-                              header.left + inset + iconSize, header.centerY() + iconSize / 2), pixelPaint);
+            canvas.drawBitmap(icon, null, iconRect, pixelPaint);
         }
-        float textLeft = header.left + inset + iconSize + inset;
-        f.draw(canvas, mon.nick + "  Lv" + mon.level
-                + (mon.gender == 0 ? " ♂" : mon.gender == 1 ? " ♀" : ""),
-                textLeft, header.top + inset, scale * 1.2f, TEXT_DARK, TEXT_SHADOW);
-        f.draw(canvas, mon.name + "  " + mon.nature + "  " + mon.ability,
-                textLeft, header.top + inset + GbaFont.LINE_HEIGHT * scale * 1.35f,
-                scale * 0.9f, TEXT_DARK, TEXT_SHADOW);
-        float barTop = header.bottom - inset - header.height() * 0.16f;
-        drawHpBar(canvas, textLeft, barTop, header.right - inset - textLeft - 140,
-                header.height() * 0.09f, mon.hp, mon.maxHp);
-        f.draw(canvas, mon.hp + "/" + mon.maxHp, header.right - inset - 130,
-                barTop - 4, scale * 0.85f, TEXT_DARK, TEXT_SHADOW);
-        // Exp bar under the HP bar, Emerald blue.
-        paint.setColor(0xFF3890F0);
-        float expW = (header.right - inset - textLeft - 140) * mon.expPct / 100f;
-        canvas.drawRoundRect(new RectF(textLeft, barTop + header.height() * 0.12f,
-                textLeft + Math.max(expW, 4), barTop + header.height() * 0.12f + 8), 4, 4, paint);
-        float badgeH2 = header.height() * 0.14f;
-        drawTypeBadge(canvas, mon.types[0], header.right - inset - badgeH2 * 3.1f, header.top + inset, badgeH2);
+
+        float textLeft = iconRect.right + inset;
+        String title = mon.isEgg ? "EGG" : mon.nick;
+        f.draw(canvas, title, textLeft, header.top + inset, scale * 1.15f, PARTY_TEXT, SUMMARY_BLUE_DARK);
+        if (mon.isEgg) {
+            f.draw(canvas, "What will hatch from this?", textLeft,
+                    header.top + inset + GbaFont.LINE_HEIGHT * scale * 1.4f,
+                    scale * 0.9f, PARTY_TEXT, SUMMARY_BLUE_DARK);
+            return;
+        }
+        float nameW = f.measure(title, scale * 1.15f);
+        if (mon.gender == 0) {
+            f.draw(canvas, "♂", textLeft + nameW + 12, header.top + inset,
+                    scale * 1.15f, PARTY_MALE, PARTY_MALE_SHADOW);
+        } else if (mon.gender == 1) {
+            f.draw(canvas, "♀", textLeft + nameW + 12, header.top + inset,
+                    scale * 1.15f, PARTY_FEMALE, PARTY_FEMALE_SHADOW);
+        }
+        f.draw(canvas, "Lv" + mon.level + "  " + mon.name, textLeft,
+                header.top + inset + GbaFont.LINE_HEIGHT * scale * 1.35f,
+                scale * 0.9f, PARTY_TEXT, SUMMARY_BLUE_DARK);
+        f.draw(canvas, mon.nature + "  " + mon.ability, textLeft,
+                header.top + inset + GbaFont.LINE_HEIGHT * scale * 2.4f,
+                scale * 0.8f, PARTY_TEXT, SUMMARY_BLUE_DARK);
+        float badgeH = header.height() * 0.18f;
+        drawTypeIcon(canvas, mon.types[0], header.right - inset - badgeH * 2,
+                header.top + inset, badgeH);
         if (mon.types[1] != mon.types[0]) {
-            drawTypeBadge(canvas, mon.types[1], header.right - inset - badgeH2 * 3.1f * 2 - 8,
-                    header.top + inset, badgeH2);
+            drawTypeIcon(canvas, mon.types[1], header.right - inset - badgeH * 4 - 8,
+                    header.top + inset, badgeH);
         }
 
-        // Left column: stats. Right column: moves with PP.
+        // Skills page on the left, Moves page on the right, item row below.
         float columnsTop = header.bottom + pad;
+        float itemH = contentHeight * 0.105f;
         float colW = (getWidth() - pad * 3) / 2;
-        RectF statsBox = new RectF(pad, columnsTop, pad + colW, contentHeight - pad);
-        RectF movesBox = new RectF(pad * 2 + colW, columnsTop, getWidth() - pad, contentHeight - pad);
-        for (RectF box : new RectF[] {statsBox, movesBox}) {
-            paint.setColor(PANEL_WHITE);
-            canvas.drawRoundRect(box, 12, 12, paint);
-            paint.setColor(BAR_BORDER);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(3);
-            canvas.drawRoundRect(box, 12, 12, paint);
-            paint.setStyle(Paint.Style.FILL);
-        }
+        float stripH = GbaFont.LINE_HEIGHT * scale + 12;
+        RectF skillsBox = new RectF(pad, columnsTop, pad + colW,
+                contentHeight - pad * 1.5f - itemH);
+        RectF movesBox = new RectF(pad * 2 + colW, columnsTop, getWidth() - pad, skillsBox.bottom);
+        drawSummaryPanel(canvas, skillsBox, "SKILLS", stripH, scale);
+        drawSummaryPanel(canvas, movesBox, "MOVES", stripH, scale);
 
-        float rowStep = (statsBox.height() - pad * 2) / 5f;
+        // HP with the bar, five stats, then the EXP bar: seven rows.
+        float left = skillsBox.left + pad;
+        float right = skillsBox.right - pad;
+        float rowsTop = skillsBox.top + stripH + 8;
+        float rowStep = (skillsBox.bottom - rowsTop - pad * 0.6f) / 7f;
+        float y = rowsTop + (rowStep - GbaFont.LINE_HEIGHT * scale) / 2;
+        f.draw(canvas, "HP", left, y, scale, TEXT_DARK, TEXT_SHADOW);
+        String hpText = mon.hp + "/" + mon.maxHp;
+        float hpW = f.measure(hpText, scale);
+        f.draw(canvas, hpText, right - hpW, y, scale, TEXT_DARK, TEXT_SHADOW);
+        int level = hpBarLevel(mon.hp, mon.maxHp);
+        float barLeft = left + f.measure("SP. ATK", scale) + 16;
+        float barH = rowStep * 0.32f;
+        drawGbaBar(canvas, barLeft, y + (GbaFont.LINE_HEIGHT * scale - barH) / 2,
+                right - hpW - 16 - barLeft, barH,
+                mon.maxHp > 0 ? mon.hp / (float) mon.maxHp : 0,
+                PARTY_HP_TOP[level], PARTY_HP_BODY[level]);
         for (int i = 0; i < 5; i++) {
-            float y = statsBox.top + pad + i * rowStep + (rowStep - GbaFont.LINE_HEIGHT * scale) / 2;
-            f.draw(canvas, STAT_NAMES[i], statsBox.left + pad, y, scale, TEXT_DARK, TEXT_SHADOW);
-            String v = Integer.toString(mon.stats[i]);
-            float w = f.measure(v, scale);
-            f.draw(canvas, v, statsBox.right - pad - w, y, scale, TEXT_DARK, TEXT_SHADOW);
+            y = rowsTop + (i + 1) * rowStep + (rowStep - GbaFont.LINE_HEIGHT * scale) / 2;
+            f.draw(canvas, STAT_NAMES[i], left, y, scale, TEXT_DARK, TEXT_SHADOW);
+            String v = Integer.toString(mon.stats[STAT_ORDER[i]]);
+            f.draw(canvas, v, right - f.measure(v, scale), y, scale, TEXT_DARK, TEXT_SHADOW);
         }
+        y = rowsTop + 6 * rowStep + (rowStep - GbaFont.LINE_HEIGHT * scale) / 2;
+        f.draw(canvas, "EXP", left, y, scale, TEXT_DARK, TEXT_SHADOW);
+        drawGbaBar(canvas, barLeft, y + (GbaFont.LINE_HEIGHT * scale - barH) / 2,
+                right - barLeft, barH, mon.expPct / 100f, PARTY_MALE, SUMMARY_BLUE);
 
-        float moveStep = (movesBox.height() - pad * 2) / 4f;
+        // Moves with PP, like the Moves page.
+        float moveStep = (movesBox.bottom - movesBox.top - stripH - 8 - pad * 0.6f) / 4f;
         for (int i = 0; i < 4; i++) {
-            float y = movesBox.top + pad + i * moveStep + (moveStep - GbaFont.LINE_HEIGHT * scale) / 2;
+            y = movesBox.top + stripH + 8 + i * moveStep + (moveStep - GbaFont.LINE_HEIGHT * scale) / 2;
             if (i < mon.moves.size()) {
                 DualScreenState.Move move = mon.moves.get(i);
-                float badgeH = moveStep * 0.42f;
-                drawTypeBadge(canvas, move.type, movesBox.left + pad,
-                        y + (GbaFont.LINE_HEIGHT * scale - badgeH) / 2, badgeH);
-                f.draw(canvas, move.name, movesBox.left + pad + badgeH * 3.1f + 12, y,
+                float moveBadgeH = moveStep * 0.55f;
+                drawTypeIcon(canvas, move.type, movesBox.left + pad,
+                        y + (GbaFont.LINE_HEIGHT * scale - moveBadgeH) / 2, moveBadgeH);
+                f.draw(canvas, move.name, movesBox.left + pad + moveBadgeH * 2 + 12, y,
                         scale, TEXT_DARK, TEXT_SHADOW);
-                String pp = move.pp + "/" + move.maxPp;
+                String pp = "PP " + move.pp + "/" + move.maxPp;
                 float w = f.measure(pp, scale * 0.85f);
                 f.draw(canvas, pp, movesBox.right - pad - w, y, scale * 0.85f,
                         move.pp == 0 ? HP_RED : TEXT_DARK, TEXT_SHADOW);
             } else {
                 f.draw(canvas, "-", movesBox.left + pad, y, scale, TEXT_DARK, TEXT_SHADOW);
             }
+        }
+
+        // Held item row, with the real item icon.
+        RectF itemBox = new RectF(pad, skillsBox.bottom + pad * 0.5f,
+                getWidth() - pad, skillsBox.bottom + pad * 0.5f + itemH);
+        drawBar(canvas, itemBox, false, null, scale);
+        float itemY = itemBox.centerY() - GbaFont.LINE_HEIGHT * scale / 2;
+        f.draw(canvas, "ITEM", itemBox.left + pad, itemY, scale, TEXT_DARK, TEXT_SHADOW);
+        float itemTextLeft = itemBox.left + pad + f.measure("ITEM", scale) + 18;
+        if (mon.item > 0) {
+            Bitmap itemGfx = itemIcon(mon.item);
+            float iconH = itemBox.height() * 0.8f;
+            if (itemGfx != null) {
+                canvas.drawBitmap(itemGfx, null,
+                        new RectF(itemTextLeft, itemBox.centerY() - iconH / 2,
+                                  itemTextLeft + iconH, itemBox.centerY() + iconH / 2), pixelPaint);
+                itemTextLeft += iconH + 10;
+            }
+            f.draw(canvas, mon.itemName, itemTextLeft, itemY, scale, TEXT_DARK, TEXT_SHADOW);
+        } else {
+            f.draw(canvas, "NONE", itemTextLeft, itemY, scale, TEXT_DARK, TEXT_SHADOW);
         }
     }
 
@@ -611,11 +1306,11 @@ public final class DualScreenView extends View {
                 + (mon.gender == 0 ? " ♂" : mon.gender == 1 ? " ♀" : "");
         f.draw(canvas, header, textLeft, rect.top + inset, scale, TEXT_DARK, TEXT_SHADOW);
 
-        float badgeH = rect.height() * 0.11f;
-        drawTypeBadge(canvas, mon.types[0], rect.right - inset - badgeH * 3.1f,
+        float badgeH = rect.height() * 0.14f;
+        drawTypeIcon(canvas, mon.types[0], rect.right - inset - badgeH * 2,
                 rect.bottom - inset - badgeH, badgeH);
         if (mon.types[1] != mon.types[0]) {
-            drawTypeBadge(canvas, mon.types[1], rect.right - inset - badgeH * 3.1f * 2 - 8,
+            drawTypeIcon(canvas, mon.types[1], rect.right - inset - badgeH * 4 - 8,
                     rect.bottom - inset - badgeH, badgeH);
         }
 
@@ -654,53 +1349,31 @@ public final class DualScreenView extends View {
 
         for (RectF r : battleButtons) r.setEmpty();
         battleCancel.setEmpty();
+        battleUseButton.setEmpty();
         battleButtonsMenu = state.battleMenu;
 
-        DualScreenState.Mon enemy = state.battleEnemyMon;
+        // Gen 4-style takeover panels own the whole bottom screen.
+        if (battlePanel == 1) {
+            drawBattleBag(canvas);
+            return;
+        }
+        if (battlePanel == 2 || battlePanel == 3) {
+            drawBattleParty(canvas);
+            return;
+        }
+
         DualScreenState.Mon self = state.battlePlayerMon;
         float gridTop = pad;
 
         if (state.battleMenu == 0) {
-            // Idle: two big matching cards fill the screen.
-            float cardH = (contentHeight - pad * 3) / 2;
-            float cardScale = scale * 1.5f;
-            RectF enemyRect = new RectF(pad, pad, getWidth() - pad, pad + cardH);
-            if (enemy != null) {
-                drawBattleMonCard(canvas, enemy, enemyRect,
-                        state.battleKind == 1 ? "FOE " : "WILD ", cardScale);
-            }
-            RectF selfRect = new RectF(pad, enemyRect.bottom + pad,
-                    getWidth() - pad, enemyRect.bottom + pad + cardH);
-            drawBattleMonCard(canvas, self, selfRect, "", cardScale);
+            drawBattleIdle(canvas, pad, scale);
             return;
         }
 
         if (state.battleMenu == 1) {
-            // Action menu: FIGHT / BAG / POKEMON / RUN, Gen 4 style.
-            String[] labels = {"FIGHT", "BAG", "POKéMON", "RUN"};
-            int[] colors = {0xFFD05050, 0xFFE0A048, 0xFF58A868, 0xFF5880C8};
-            int[] borders = {0xFF984040, 0xFFA87838, 0xFF3C7A48, 0xFF405E98};
-            float cellH = (contentHeight - gridTop - pad * 2) / 2;
-            float cellW = (getWidth() - pad * 3) / 2;
-            for (int i = 0; i < 4; i++) {
-                float left = pad + (i % 2) * (cellW + pad);
-                float top = gridTop + (i / 2) * (cellH + pad);
-                RectF cell = new RectF(left, top, left + cellW, top + cellH);
-                battleButtons[i].set(cell);
-                paint.setColor(borders[i]);
-                canvas.drawRoundRect(cell, 14, 14, paint);
-                RectF inner = new RectF(cell);
-                inner.inset(5, 5);
-                paint.setColor(colors[i]);
-                canvas.drawRoundRect(inner, 10, 10, paint);
-                float labelScale = scale * 1.8f;
-                float w = f.measure(labels[i], labelScale);
-                f.draw(canvas, labels[i], cell.centerX() - w / 2,
-                        cell.centerY() - GbaFont.LINE_HEIGHT * labelScale / 2,
-                        labelScale, TEXT_WHITE, borders[i]);
-            }
+            drawBattleCommands(canvas, pad, scale);
         } else {
-            // Move grid: interactive during move select, dimmed otherwise.
+            // Move grid: name, type icon, PP, PWR/ACC, effectiveness hint.
             boolean active = state.battleMenu == 2;
             float cancelH = active ? contentHeight * 0.085f : 0;
             float cellH = (contentHeight - gridTop - pad * 2 - cancelH - (active ? pad : 0)) / 2;
@@ -715,17 +1388,37 @@ public final class DualScreenView extends View {
                     }
                     drawBar(canvas, cell, active, null, scale);
                     DualScreenState.Move move = self.moves.get(i);
-                    float inset = cellH * 0.16f;
-                    float nameScale = scale * 1.5f;
-                    f.draw(canvas, move.name, cell.left + inset, cell.top + cellH * 0.22f,
+                    float inset = cellH * 0.14f;
+                    float nameScale = scale * 1.35f;
+                    f.draw(canvas, move.name, cell.left + inset, cell.top + inset,
                             nameScale, TEXT_DARK, TEXT_SHADOW);
-                    drawTypeBadge(canvas, move.type, cell.left + inset,
-                            cell.bottom - inset - cellH * 0.16f, cellH * 0.16f);
+                    String info = "PWR " + (move.power == 0 ? "—" : Integer.toString(move.power))
+                            + "   ACC " + (move.accuracy == 0 ? "—" : Integer.toString(move.accuracy));
+                    f.draw(canvas, info, cell.left + inset,
+                            cell.top + inset + GbaFont.LINE_HEIGHT * nameScale + 6,
+                            scale * 0.85f, 0xFF70707A, TEXT_SHADOW);
+                    float iconH = cellH * 0.22f;
+                    drawTypeIcon(canvas, move.type, cell.left + inset,
+                            cell.bottom - inset - iconH, iconH);
                     String pp = "PP " + move.pp + "/" + move.maxPp;
-                    float w = f.measure(pp, scale * 0.9f);
+                    float ppScale = scale * 0.95f;
+                    float w = f.measure(pp, ppScale);
                     f.draw(canvas, pp, cell.right - inset - w,
-                            cell.bottom - inset - GbaFont.LINE_HEIGHT * scale * 0.9f,
-                            scale * 0.9f, move.pp == 0 ? HP_RED : TEXT_DARK, TEXT_SHADOW);
+                            cell.bottom - inset - iconH
+                                    + (iconH - GbaFont.LINE_HEIGHT * ppScale) / 2,
+                            ppScale, move.pp == 0 ? HP_RED : TEXT_DARK, TEXT_SHADOW);
+                    // Effectiveness corner markers: one per live foe in
+                    // doubles (right foe outermost), one in singles. Absent
+                    // foes and normal effectiveness draw nothing.
+                    float mr = cellH * 0.085f;
+                    float mx = cell.right - inset * 0.6f - mr * 1.4f;
+                    float my = cell.top + inset * 0.6f + mr * 1.4f;
+                    if (!state.battleDouble) {
+                        drawEffMarker(canvas, move.eff[0], mx, my, mr);
+                    } else {
+                        drawEffMarker(canvas, move.eff[1], mx, my, mr);
+                        drawEffMarker(canvas, move.eff[0], mx - mr * 3.2f, my, mr);
+                    }
                 } else {
                     paint.setColor(0x44A88848);
                     canvas.drawRoundRect(cell, 8, 8, paint);
@@ -738,6 +1431,445 @@ public final class DualScreenView extends View {
                 drawBar(canvas, cancel, false, "CANCEL", scale * 0.9f);
             }
         }
+    }
+
+    /**
+     * Idle companion cards while the engine is animating or between menus:
+     * singles keeps the two big cards, doubles shows all four battlers
+     * (player pair left, foes right). A pulsing dots pill signals that
+     * nothing down here is tappable right now.
+     */
+    private void drawBattleIdle(Canvas canvas, float pad, float scale) {
+        float contentHeight = getHeight();
+        DualScreenState.Mon self = state.battlePlayerMon;
+        DualScreenState.Mon enemy = state.battleEnemyMon;
+        String foePrefix = state.battleKind == 1 ? "FOE " : "WILD ";
+        float waitH = contentHeight * 0.075f;
+        float area = contentHeight - waitH - pad;
+        boolean four = state.battleDouble
+                && (state.battlePlayerMon2 != null || state.battleEnemyMon2 != null);
+
+        if (four) {
+            float cardH = (area - pad * 3) / 2;
+            float cardW = (getWidth() - pad * 3) / 2;
+            float cardScale = scale * 0.85f;
+            DualScreenState.Mon[] mons = {self, state.battlePlayerMon2,
+                                          enemy, state.battleEnemyMon2};
+            for (int i = 0; i < 4; i++) {
+                if (mons[i] == null) {
+                    continue;
+                }
+                int col = i / 2; // players left, foes right
+                int row = i % 2;
+                float left = pad + col * (cardW + pad);
+                float top = pad + row * (cardH + pad);
+                drawBattleMonCard(canvas, mons[i],
+                        new RectF(left, top, left + cardW, top + cardH),
+                        col == 1 ? foePrefix : "", cardScale);
+            }
+        } else {
+            float cardH = (area - pad * 3) / 2;
+            float cardScale = scale * 1.5f;
+            RectF enemyRect = new RectF(pad, pad, getWidth() - pad, pad + cardH);
+            if (enemy != null) {
+                drawBattleMonCard(canvas, enemy, enemyRect, foePrefix, cardScale);
+            }
+            RectF selfRect = new RectF(pad, enemyRect.bottom + pad,
+                    getWidth() - pad, enemyRect.bottom + pad + cardH);
+            drawBattleMonCard(canvas, self, selfRect, "", cardScale);
+        }
+
+        // Waiting pill: three pulsing dots, centered under the cards.
+        float cx = getWidth() / 2f;
+        float cy = contentHeight - pad - waitH / 2;
+        float r = waitH * 0.14f;
+        float gap = r * 3.2f;
+        int phase = (int) ((System.currentTimeMillis() / 350) % 3);
+        paint.setColor(0x50304038);
+        canvas.drawRoundRect(new RectF(cx - gap * 2.1f, cy - r * 2.6f,
+                cx + gap * 2.1f, cy + r * 2.6f), r * 2.6f, r * 2.6f, paint);
+        for (int i = 0; i < 3; i++) {
+            paint.setColor(i == phase ? 0xFFF8F8F8 : 0x80FFFFFF);
+            canvas.drawCircle(cx + (i - 1) * gap, cy, r, paint);
+        }
+        postInvalidateDelayed(350);
+    }
+
+    // DP-layout command screen: FIGHT dominant on top, BAG / POKéMON / RUN
+    // in a row below, each in its own accent family. All shapes and glyphs
+    // are drawn from scratch on the Canvas.
+    private static final String[] CMD_LABELS = {"FIGHT", "BAG", "POKéMON", "RUN"};
+    private static final int[] CMD_FILL  = {0xFFE05838, 0xFFE8B030, 0xFF48A860, 0xFF4878C8};
+    private static final int[] CMD_LIGHT = {0xFFF88860, 0xFFF8D060, 0xFF78D088, 0xFF78A8E8};
+    private static final int[] CMD_DARK  = {0xFFA03820, 0xFFA87818, 0xFF287840, 0xFF285090};
+
+    private void drawBattleCommands(Canvas canvas, float pad, float scale) {
+        float contentHeight = getHeight();
+        float gridTop = pad;
+        boolean runDisabled = state.battleKind == 1; // no running from trainers
+
+        float fightH = (contentHeight - gridTop - pad * 2) * 0.56f;
+        RectF fight = new RectF(pad, gridTop, getWidth() - pad, gridTop + fightH);
+        battleButtons[0].set(fight);
+        drawCommandButton(canvas, fight, 0, battlePressedCmd == 0, true, scale * 2.1f);
+
+        float smallTop = fight.bottom + pad;
+        float smallW = (getWidth() - pad * 4) / 3f;
+        for (int i = 1; i < 4; i++) {
+            float left = pad + (i - 1) * (smallW + pad);
+            RectF cell = new RectF(left, smallTop, left + smallW, contentHeight - pad);
+            battleButtons[i].set(cell);
+            drawCommandButton(canvas, cell, i, battlePressedCmd == i,
+                    !(i == 3 && runDisabled), scale * 1.1f);
+        }
+    }
+
+    /** One beveled command button with its glyph, label, and pressed state. */
+    private void drawCommandButton(Canvas canvas, RectF cell, int cmd, boolean pressed,
+                                   boolean enabled, float labelScale) {
+        GbaFont f = font();
+        int fill = enabled ? CMD_FILL[cmd] : 0xFF9AA2AA;
+        int light = enabled ? CMD_LIGHT[cmd] : 0xFFC0C6CC;
+        int dark = enabled ? CMD_DARK[cmd] : 0xFF6A7278;
+
+        RectF inner = new RectF(cell);
+        paint.setColor(dark);
+        canvas.drawRoundRect(cell, 16, 16, paint);
+        inner.inset(4, 4);
+        paint.setColor(pressed ? blendColor(fill, dark, 0.35f) : fill);
+        canvas.drawRoundRect(inner, 12, 12, paint);
+
+        // Bevel: light lip on top, shaded base below; pressed inverts it.
+        float lip = Math.max(6, inner.height() * 0.09f);
+        paint.setColor(pressed ? dark : light);
+        canvas.drawRoundRect(new RectF(inner.left + 5, inner.top + 4,
+                inner.right - 5, inner.top + 4 + lip), lip / 2, lip / 2, paint);
+        if (!pressed) {
+            paint.setColor(blendColor(fill, dark, 0.55f));
+            canvas.drawRoundRect(new RectF(inner.left + 5, inner.bottom - 4 - lip,
+                    inner.right - 5, inner.bottom - 4), lip / 2, lip / 2, paint);
+        }
+
+        float shift = pressed ? 3 : 0;
+        float glyphR = Math.min(inner.height() * 0.16f, inner.width() * 0.11f);
+        float labelH = GbaFont.LINE_HEIGHT * labelScale;
+        float totalH = glyphR * 2 + 10 + labelH;
+        float contentTop = inner.centerY() - totalH / 2 + shift;
+        drawCommandGlyph(canvas, cmd, inner.centerX(), contentTop + glyphR, glyphR,
+                enabled ? TEXT_WHITE : 0xFFD8DCE0);
+        if (f != null) {
+            String label = CMD_LABELS[cmd];
+            float w = f.measure(label, labelScale);
+            f.draw(canvas, label, inner.centerX() - w / 2, contentTop + glyphR * 2 + 10,
+                    labelScale, enabled ? TEXT_WHITE : 0xFFE0E4E8,
+                    enabled ? dark : 0xFF787E84);
+        }
+    }
+
+    /** Small hand-drawn motifs: crossed bars, bag, ball, running chevrons. */
+    private void drawCommandGlyph(Canvas canvas, int cmd, float cx, float cy, float r, int color) {
+        paint.setColor(color);
+        switch (cmd) {
+        case 0: // FIGHT: two crossed bars
+            for (int d = -1; d <= 1; d += 2) {
+                int save = canvas.save();
+                canvas.rotate(45 * d, cx, cy);
+                canvas.drawRoundRect(new RectF(cx - r, cy - r * 0.22f, cx + r, cy + r * 0.22f),
+                        r * 0.22f, r * 0.22f, paint);
+                canvas.restoreToCount(save);
+            }
+            break;
+        case 1: // BAG: body with a handle arc
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(r * 0.28f);
+            canvas.drawArc(new RectF(cx - r * 0.45f, cy - r * 1.05f, cx + r * 0.45f, cy - r * 0.05f),
+                    180, 180, false, paint);
+            paint.setStyle(Paint.Style.FILL);
+            canvas.drawRoundRect(new RectF(cx - r * 0.8f, cy - r * 0.5f, cx + r * 0.8f, cy + r),
+                    r * 0.3f, r * 0.3f, paint);
+            break;
+        case 2: // POKéMON: a plain ball outline
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(r * 0.26f);
+            canvas.drawCircle(cx, cy, r * 0.85f, paint);
+            canvas.drawLine(cx - r * 0.85f, cy, cx + r * 0.85f, cy, paint);
+            paint.setStyle(Paint.Style.FILL);
+            canvas.drawCircle(cx, cy, r * 0.3f, paint);
+            break;
+        case 3: // RUN: double chevron out the door
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(r * 0.3f);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            for (int i = 0; i < 2; i++) {
+                float x = cx - r * 0.75f + i * r * 0.75f;
+                android.graphics.Path p = new android.graphics.Path();
+                p.moveTo(x, cy - r * 0.7f);
+                p.lineTo(x + r * 0.6f, cy);
+                p.lineTo(x, cy + r * 0.7f);
+                canvas.drawPath(p, paint);
+            }
+            paint.setStrokeCap(Paint.Cap.BUTT);
+            paint.setStyle(Paint.Style.FILL);
+            break;
+        }
+    }
+
+    /** Transient in-battle message (e.g. "It won't have any effect."). */
+    private void drawBattleNotice(Canvas canvas, float scale) {
+        if (battleNotice.isEmpty() || System.currentTimeMillis() - battleNoticeMs > 2500) {
+            return;
+        }
+        GbaFont f = font();
+        if (f == null) {
+            return;
+        }
+        float w = f.measure(battleNotice, scale);
+        RectF box = new RectF((getWidth() - w) / 2 - 20, getHeight() * 0.40f,
+                (getWidth() + w) / 2 + 20,
+                getHeight() * 0.40f + GbaFont.LINE_HEIGHT * scale + 22);
+        paint.setColor(0xE0303840);
+        canvas.drawRoundRect(box, 10, 10, paint);
+        f.draw(canvas, battleNotice, box.left + 20, box.top + 11, scale, TEXT_WHITE, 0xFF181C20);
+        postInvalidateDelayed(2600); // let the notice clear itself
+    }
+
+    /** The battle bag: pocket tabs, usable-item list, description + USE, CANCEL. */
+    private void drawBattleBag(Canvas canvas) {
+        GbaFont f = font();
+        if (f == null) {
+            return;
+        }
+        float height = getHeight();
+        float pad = getWidth() * 0.02f;
+        float scale = getWidth() / 460f;
+        int[] pockets = battleVisiblePockets();
+        if (battleBagPocket >= pockets.length) {
+            battleBagPocket = 0;
+        }
+        int pocket = pockets[battleBagPocket];
+        int accent = POCKET_ACCENTS[pocket];
+
+        for (int i = 0; i < pockets.length; i++) {
+            RectF r = battlePocketRect(i, pockets.length);
+            r.inset(5, 5);
+            drawPocketTab(canvas, r, i == battleBagPocket, POCKET_NAMES[pockets[i]],
+                    scale * 0.85f, POCKET_ACCENTS[pockets[i]], POCKET_ACCENTS_DARK[pockets[i]]);
+        }
+
+        float cancelH = height * 0.085f;
+        RectF cancel = new RectF(pad, height - cancelH - pad * 0.4f,
+                getWidth() - pad, height - pad * 0.4f);
+        battleCancel.set(cancel);
+        drawBar(canvas, cancel, false, "CANCEL", scale * 0.9f);
+
+        float descH = height * 0.24f;
+        RectF descBox = new RectF(pad, cancel.top - pad * 0.5f - descH,
+                getWidth() - pad, cancel.top - pad * 0.5f);
+        battleBagListTop = height * 0.095f + pad * 0.6f;
+        battleBagListBottom = descBox.top - pad * 0.6f;
+        battleBagRowH = height * 0.082f;
+
+        java.util.List<DualScreenState.BagItem> items = battleBagItems();
+        if (battleBagSelected >= items.size()) {
+            battleBagSelected = items.size() - 1;
+        }
+        battleBagScroll = Math.max(0, Math.min(battleBagMaxScroll(), battleBagScroll));
+
+        if (items.isEmpty()) {
+            String message = "No usable items";
+            f.draw(canvas, message, (getWidth() - f.measure(message, scale)) / 2,
+                    (battleBagListTop + battleBagListBottom) / 2 - GbaFont.LINE_HEIGHT * scale / 2,
+                    scale, TEXT_DARK, TEXT_SHADOW);
+        } else {
+            int save = canvas.save();
+            canvas.clipRect(0, battleBagListTop, getWidth(), battleBagListBottom);
+            float iconSize = battleBagRowH * 0.85f;
+            float rowLeft = pad * 1.6f;
+            float rowRight = getWidth() - pad * 1.6f;
+            for (int i = 0; i < items.size(); i++) {
+                float top = battleBagListTop + i * battleBagRowH - battleBagScroll;
+                if (top + battleBagRowH < battleBagListTop || top > battleBagListBottom) {
+                    continue;
+                }
+                DualScreenState.BagItem item = items.get(i);
+                if (i == battleBagSelected) {
+                    drawSelectionBar(canvas, rowLeft, rowRight, top, battleBagRowH, accent);
+                }
+                float iconLeft = rowLeft + battleBagRowH * 0.62f;
+                Bitmap icon = itemIcon(item.id);
+                if (icon != null) {
+                    canvas.drawBitmap(icon, null,
+                            new RectF(iconLeft, top + (battleBagRowH - iconSize) / 2,
+                                      iconLeft + iconSize, top + (battleBagRowH + iconSize) / 2),
+                            pixelPaint);
+                }
+                float textY = top + (battleBagRowH - GbaFont.LINE_HEIGHT * scale) / 2;
+                f.draw(canvas, item.name, iconLeft + iconSize + pad * 0.8f, textY,
+                        scale, TEXT_DARK, TEXT_SHADOW);
+                String qty = "x" + item.quantity;
+                float w = f.measure(qty, scale);
+                f.draw(canvas, qty, rowRight - pad * 0.8f - w, textY, scale, TEXT_DARK, TEXT_SHADOW);
+            }
+            canvas.restoreToCount(save);
+        }
+
+        // Description box with the USE button, dark like the in-game bag's.
+        drawDescBox(canvas, descBox);
+        float inset = descBox.height() * 0.14f;
+        if (battleBagSelected >= 0 && battleBagSelected < items.size()) {
+            DualScreenState.BagItem sel = items.get(battleBagSelected);
+            float bigIcon = descBox.height() - inset * 2;
+            Bitmap icon = itemIcon(sel.id);
+            if (icon != null) {
+                canvas.drawBitmap(icon, null,
+                        new RectF(descBox.left + inset, descBox.top + inset,
+                                  descBox.left + inset + bigIcon, descBox.bottom - inset), pixelPaint);
+            }
+            RectF use = new RectF(descBox.right - inset - descBox.height() * 1.15f,
+                    descBox.top + inset, descBox.right - inset, descBox.bottom - inset);
+            battleUseButton.set(use);
+            boolean ready = state.battleSub == 1;
+            paint.setColor(ready ? 0xFF58A868 : 0xFF8898A0);
+            canvas.drawRoundRect(use, 10, 10, paint);
+            float useScale = scale * 1.2f;
+            f.draw(canvas, "USE", use.centerX() - f.measure("USE", useScale) / 2,
+                    use.centerY() - GbaFont.LINE_HEIGHT * useScale / 2, useScale,
+                    TEXT_WHITE, ready ? 0xFF3C7A48 : 0xFF687880);
+
+            float textLeft = descBox.left + inset + bigIcon + inset;
+            float textRight = use.left - inset;
+            f.draw(canvas, sel.name, textLeft, descBox.top + inset, scale,
+                    descNameColor(), descShadowColor());
+            float descScale = scale * 0.9f;
+            float lineY = descBox.top + inset + GbaFont.LINE_HEIGHT * scale * 1.15f;
+            for (String line : wrapText(f, itemDescription(sel.id), descScale, textRight - textLeft)) {
+                if (lineY + GbaFont.LINE_HEIGHT * descScale > descBox.bottom - inset * 0.5f) {
+                    break;
+                }
+                f.draw(canvas, line, textLeft, lineY, descScale, descTextColor(), descShadowColor());
+                lineY += GbaFont.LINE_HEIGHT * descScale * 1.05f;
+            }
+        } else {
+            String hint = "Choose an item.";
+            f.draw(canvas, hint, descBox.left + inset,
+                    descBox.centerY() - GbaFont.LINE_HEIGHT * scale / 2, scale,
+                    descTextColor(), descShadowColor());
+        }
+        drawBattleNotice(canvas, scale);
+    }
+
+    /**
+     * The battle party staircase: the same layout as the party tab, with
+     * untappable slots (fainted, eggs, on the field, engine-forbidden)
+     * drawn in the game's fainted recolor and dimmed. Serves both the
+     * switch step (panel 2) and the item-target step (panel 3).
+     */
+    private void drawBattleParty(Canvas canvas) {
+        GbaFont f = font();
+        float height = getHeight();
+        float pad = getWidth() * 0.02f;
+        float scale = getWidth() / 440f;
+
+        float cancelH = height * 0.085f;
+        RectF cancel = new RectF(pad, height - cancelH - pad * 0.4f,
+                getWidth() - pad, height - pad * 0.4f);
+        battleCancel.set(cancel);
+        drawBar(canvas, cancel, false, battlePanel == 3 ? "BACK" : "CANCEL", scale * 0.9f);
+
+        float contentHeight = cancel.top - pad * 0.5f;
+        int s = (int) Math.min(getWidth() / 240f, contentHeight / 160f);
+        if (s < 1) s = 1;
+        float ox = (getWidth() - 240f * s) / 2f;
+        float oy = (contentHeight - 160f * s) / 2f;
+        float nameScale = s * 0.8f;
+        float subScale = s * 0.65f;
+
+        for (int i = 0; i < 6; i++) {
+            boolean present = i < state.party.size();
+            DualScreenState.Mon mon = present ? state.party.get(i) : null;
+            boolean lead = i == 0;
+            boolean enabled = present && battlePartySlotEnabled(i);
+            boolean fainted = present && !mon.isEgg && mon.hp == 0;
+            int kind = !present ? 4 : lead ? (mon.isEgg ? 1 : 0) : (mon.isEgg ? 3 : 2);
+            float wx = ox + (lead ? 8 : 96) * s;
+            float wy = oy + (lead ? 24 : 8 + 24 * (i - 1)) * s;
+            RectF slot = new RectF(wx, wy, wx + (lead ? 80 : 144) * s, wy + (lead ? 56 : 24) * s);
+            battlePartyCards[i].set(slot);
+            drawSlotChrome(canvas, slot, kind, present && (fainted || !enabled));
+            if (!present || f == null) continue;
+
+            Bitmap icon = mon.isEgg ? null : monIcon(mon.species);
+            float ix = lead ? ox : wx - 8 * s;
+            float iy = lead ? wy : wy - 6 * s;
+            if (icon != null) {
+                canvas.drawBitmap(icon, null, new RectF(ix, iy, ix + 32 * s, iy + 32 * s), pixelPaint);
+            }
+
+            String title = mon.isEgg ? "EGG" : mon.nick;
+            float nickX = wx + (lead ? 24 : 22) * s;
+            float nickY = wy + (lead ? 11 : 3) * s;
+            f.draw(canvas, title, nickX, nickY, nameScale, PARTY_TEXT, PARTY_TEXT_SHADOW);
+            if (!mon.isEgg) {
+                float subY = wy + (lead ? 20 : 12) * s;
+                int statusIdx = statusIconIndex(mon.status, mon.hp);
+                if (statusIdx < 0) {
+                    f.draw(canvas, "Lv" + mon.level, wx + (lead ? 32 : 30) * s, subY,
+                            subScale, PARTY_TEXT, PARTY_TEXT_SHADOW);
+                    if (mon.gender == 0) {
+                        f.draw(canvas, "♂", wx + (lead ? 64 : 62) * s, subY,
+                                subScale, PARTY_MALE, PARTY_MALE_SHADOW);
+                    } else if (mon.gender == 1) {
+                        f.draw(canvas, "♀", wx + (lead ? 64 : 62) * s, subY,
+                                subScale, PARTY_FEMALE, PARTY_FEMALE_SHADOW);
+                    }
+                } else {
+                    Bitmap tag = statusIcon(statusIdx);
+                    float tx = lead ? ox + 34 * s : wx + 24 * s;
+                    float ty = lead ? wy + 24 * s : wy + 15 * s;
+                    if (tag != null) {
+                        canvas.drawBitmap(tag, null,
+                                new RectF(tx, ty, tx + 32 * s, ty + 8 * s), pixelPaint);
+                    }
+                }
+
+                float barX = wx + (lead ? 24 : 88) * s;
+                float barY = wy + (lead ? 35 : 10) * s;
+                float fillPx = mon.maxHp > 0 ? 48f * mon.hp / mon.maxHp : 0;
+                if (mon.hp > 0 && fillPx < 1) fillPx = 1;
+                int level = hpBarLevel(mon.hp, mon.maxHp);
+                paint.setColor(PARTY_HP_TOP[level]);
+                canvas.drawRect(barX, barY, barX + fillPx * s, barY + s, paint);
+                paint.setColor(PARTY_HP_BODY[level]);
+                canvas.drawRect(barX, barY + s, barX + fillPx * s, barY + 3 * s, paint);
+
+                String hpText = mon.hp + "/" + mon.maxHp;
+                float hpRight = wx + (lead ? 77 : 141) * s;
+                float hpY = wy + (lead ? 37 : 12) * s;
+                f.draw(canvas, hpText, hpRight - f.measure(hpText, subScale), hpY,
+                        subScale, PARTY_TEXT, PARTY_TEXT_SHADOW);
+            }
+
+            if (!enabled) {
+                paint.setColor(0x50000000);
+                canvas.drawRoundRect(slot, 4, 4, paint);
+            }
+        }
+
+        if (f != null) {
+            String message;
+            if (battlePanel == 3) {
+                message = "Use on which POKéMON?";
+            } else if (state.battleSubCase == 2) {
+                message = "Can't switch out now!";
+            } else if (state.battleSubCase == 4) {
+                message = "An ability prevents switching!";
+            } else {
+                message = "Switch to which POKéMON?";
+            }
+            f.draw(canvas, message, ox + 10 * s, oy + 134 * s,
+                    s * 0.9f, TEXT_DARK, TEXT_SHADOW);
+        }
+        drawBattleNotice(canvas, scale);
     }
 
     private void ensureMapData() {
@@ -829,45 +1961,216 @@ public final class DualScreenView extends View {
         }
     }
 
+    /** A pocket tab, like drawBar but themed with the pocket's accent color. */
+    private void drawPocketTab(Canvas canvas, RectF r, boolean selected, String label,
+                               float textScale, int accent, int accentDark) {
+        paint.setColor(accentDark);
+        canvas.drawRoundRect(r, 6, 6, paint);
+        RectF inner = new RectF(r);
+        inner.inset(3, 3);
+        paint.setColor(selected ? accent : BAR_CREAM_DARK);
+        canvas.drawRoundRect(inner, 4, 4, paint);
+        if (selected) {
+            paint.setColor(BAR_CREAM);
+            RectF edge = new RectF(inner.left, inner.bottom - 6, inner.right, inner.bottom);
+            canvas.drawRoundRect(edge, 3, 3, paint);
+        }
+        GbaFont f = font();
+        if (f != null && label != null) {
+            float w = f.measure(label, textScale);
+            f.draw(canvas, label, r.centerX() - w / 2,
+                    r.centerY() - GbaFont.LINE_HEIGHT * textScale / 2, textScale,
+                    selected ? TEXT_WHITE : TEXT_DARK,
+                    selected ? accentDark : TEXT_SHADOW);
+        }
+    }
+
+    /** The selected row's cream bar with the pocket-accent cursor arrow. */
+    private void drawSelectionBar(Canvas canvas, float rowLeft, float rowRight,
+                                  float top, float rowH, int accent) {
+        RectF bar = new RectF(rowLeft, top + 2, rowRight, top + rowH - 2);
+        paint.setColor(BAR_CREAM);
+        canvas.drawRoundRect(bar, 8, 8, paint);
+        paint.setColor(BAR_BORDER);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(3);
+        canvas.drawRoundRect(bar, 8, 8, paint);
+        paint.setStyle(Paint.Style.FILL);
+        android.graphics.Path cursor = new android.graphics.Path();
+        float cx = rowLeft + rowH * 0.22f;
+        float cy = top + rowH / 2;
+        cursor.moveTo(cx, cy - rowH * 0.18f);
+        cursor.lineTo(cx + rowH * 0.26f, cy);
+        cursor.lineTo(cx, cy + rowH * 0.18f);
+        cursor.close();
+        paint.setColor(accent);
+        canvas.drawPath(cursor, paint);
+    }
+
+    /** The item description box, dark like the in-game bag's. */
+    private void drawDescBox(Canvas canvas, RectF descBox) {
+        paint.setColor(0xFF485058);
+        canvas.drawRoundRect(descBox, 10, 10, paint);
+        paint.setColor(PANEL_BORDER);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(3);
+        canvas.drawRoundRect(descBox, 10, 10, paint);
+        paint.setStyle(Paint.Style.FILL);
+    }
+
+    // Text colors inside the description box.
+    private int descNameColor()   { return 0xFFF8E888; }
+    private int descTextColor()   { return TEXT_WHITE; }
+    private int descShadowColor() { return 0xFF303840; }
+
+    /** Greedy word wrap with the game font; the bridge sends single lines. */
+    private java.util.List<String> wrapText(GbaFont f, String text, float scale, float maxWidth) {
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        StringBuilder line = new StringBuilder();
+        for (String word : text.split(" ")) {
+            String candidate = line.length() == 0 ? word : line + " " + word;
+            if (line.length() > 0 && f.measure(candidate, scale) > maxWidth) {
+                lines.add(line.toString());
+                line = new StringBuilder(word);
+            } else {
+                line = new StringBuilder(candidate);
+            }
+        }
+        if (line.length() > 0) {
+            lines.add(line.toString());
+        }
+        return lines;
+    }
+
+    private java.util.List<DualScreenState.BagItem> bagItems() {
+        return bagPocket < state.bag.size() ? state.bag.get(bagPocket)
+                : java.util.Collections.<DualScreenState.BagItem>emptyList();
+    }
+
+    private float bagMaxScroll() {
+        return Math.max(0, bagItems().size() * bagRowH - (bagListBottom - bagListTop));
+    }
+
+    private void handleBagTouch(float x, float y) {
+        for (int i = 0; i < POCKET_NAMES.length; i++) {
+            if (pocketRect(i).contains(x, y)) {
+                if (bagPocket != i) {
+                    bagPocket = i;
+                    bagScroll = 0;
+                }
+                invalidate();
+                return;
+            }
+        }
+        if (y >= bagListTop && y < bagListBottom && bagRowH > 0) {
+            int index = (int) ((y - bagListTop + bagScroll) / bagRowH);
+            if (index >= 0 && index < bagItems().size()) {
+                bagSelected[bagPocket] = index;
+                invalidate();
+            }
+        }
+    }
+
     private void drawBag(Canvas canvas) {
         GbaFont f = font();
         float contentHeight = getHeight() - tabBarHeight();
+        drawContentBackdrop(canvas, contentHeight, BAG_BG_BASE, BAG_BG_WEAVE);
         float pad = getWidth() * 0.02f;
         float scale = getWidth() / 460f;
+        int accent = POCKET_ACCENTS[bagPocket];
 
         for (int i = 0; i < POCKET_NAMES.length; i++) {
             RectF r = pocketRect(i);
             r.inset(5, 5);
-            drawBar(canvas, r, i == bagPocket, POCKET_NAMES[i], scale * 0.85f);
+            drawPocketTab(canvas, r, i == bagPocket, POCKET_NAMES[i], scale * 0.85f,
+                    POCKET_ACCENTS[i], POCKET_ACCENTS_DARK[i]);
         }
-
-        if (f == null || bagPocket >= state.bag.size() || state.bag.get(bagPocket).isEmpty()) {
-            drawCenteredMessage(canvas, "Empty pocket");
+        if (f == null) {
             return;
         }
-        java.util.List<DualScreenState.BagItem> items = state.bag.get(bagPocket);
-        float listTop = contentHeight * 0.13f;
-        int rows = 11;
-        float rowH = (contentHeight - listTop - pad) / rows;
-        int columns = 2;
-        float colW = (getWidth() - pad * (columns + 1)) / columns;
-        int visible = Math.min(items.size(), rows * columns);
-        for (int i = 0; i < visible; i++) {
-            int col = i / rows;
-            int row = i % rows;
-            float left = pad + col * (colW + pad);
-            float top = listTop + row * rowH;
-            DualScreenState.BagItem item = items.get(i);
-            f.draw(canvas, item.name, left, top + (rowH - GbaFont.LINE_HEIGHT * scale) / 2,
+
+        // Description box docked at the bottom, dark like the in-game bag's.
+        float descH = contentHeight * 0.26f;
+        RectF descBox = new RectF(pad, contentHeight - descH, getWidth() - pad,
+                contentHeight - pad * 0.4f);
+        bagListTop = contentHeight * 0.105f + pad * 0.6f;
+        bagListBottom = descBox.top - pad * 0.6f;
+        bagRowH = contentHeight * 0.082f;
+
+        // The bag screen's light list window behind the rows, so the dark
+        // row text stays readable over the slate backdrop.
+        paint.setColor(LIST_PANEL);
+        canvas.drawRoundRect(new RectF(pad * 0.6f, bagListTop - pad * 0.35f,
+                getWidth() - pad * 0.6f, bagListBottom + pad * 0.35f), 10, 10, paint);
+
+        java.util.List<DualScreenState.BagItem> items = bagItems();
+        if (items.isEmpty()) {
+            float messageY = (bagListTop + bagListBottom) / 2 - GbaFont.LINE_HEIGHT * scale / 2;
+            String message = "Empty pocket";
+            f.draw(canvas, message, (getWidth() - f.measure(message, scale)) / 2, messageY,
                     scale, TEXT_DARK, TEXT_SHADOW);
-            String qty = "x" + item.quantity;
-            float w = f.measure(qty, scale);
-            f.draw(canvas, qty, left + colW - w, top + (rowH - GbaFont.LINE_HEIGHT * scale) / 2,
-                    scale, TEXT_DARK, TEXT_SHADOW);
+            return;
         }
-        if (items.size() > visible && f != null) {
-            f.draw(canvas, "+" + (items.size() - visible) + " more~", pad,
-                    contentHeight - GbaFont.LINE_HEIGHT * scale - 4, scale * 0.85f, TEXT_DARK, TEXT_SHADOW);
+        int selected = Math.min(bagSelected[bagPocket], items.size() - 1);
+        bagSelected[bagPocket] = selected;
+        bagScroll = Math.max(0, Math.min(bagMaxScroll(), bagScroll));
+
+        // The scrolling item list, clipped so rows slide under the chrome.
+        int save = canvas.save();
+        canvas.clipRect(0, bagListTop, getWidth(), bagListBottom);
+        float iconSize = bagRowH * 0.85f;
+        float rowLeft = pad * 1.6f;
+        float rowRight = getWidth() - pad * 1.6f;
+        for (int i = 0; i < items.size(); i++) {
+            float top = bagListTop + i * bagRowH - bagScroll;
+            if (top + bagRowH < bagListTop || top > bagListBottom) {
+                continue;
+            }
+            DualScreenState.BagItem item = items.get(i);
+            if (i == selected) {
+                drawSelectionBar(canvas, rowLeft, rowRight, top, bagRowH, accent);
+            }
+            float iconLeft = rowLeft + bagRowH * 0.62f;
+            Bitmap icon = itemIcon(item.id);
+            if (icon != null) {
+                canvas.drawBitmap(icon, null,
+                        new RectF(iconLeft, top + (bagRowH - iconSize) / 2,
+                                  iconLeft + iconSize, top + (bagRowH + iconSize) / 2), pixelPaint);
+            }
+            float textY = top + (bagRowH - GbaFont.LINE_HEIGHT * scale) / 2;
+            f.draw(canvas, item.name, iconLeft + iconSize + pad * 0.8f, textY,
+                    scale, TEXT_DARK, TEXT_SHADOW);
+            if (bagPocket != 4) { // key items carry no quantity
+                String qty = "x" + item.quantity;
+                float w = f.measure(qty, scale);
+                f.draw(canvas, qty, rowRight - pad * 0.8f - w, textY, scale, TEXT_DARK, TEXT_SHADOW);
+            }
+        }
+        canvas.restoreToCount(save);
+
+        // Docked description of the selected item.
+        DualScreenState.BagItem sel = items.get(selected);
+        drawDescBox(canvas, descBox);
+        float inset = descBox.height() * 0.14f;
+        float bigIcon = descBox.height() - inset * 2;
+        Bitmap icon = itemIcon(sel.id);
+        if (icon != null) {
+            canvas.drawBitmap(icon, null,
+                    new RectF(descBox.left + inset, descBox.top + inset,
+                              descBox.left + inset + bigIcon, descBox.bottom - inset), pixelPaint);
+        }
+        float textLeft = descBox.left + inset + bigIcon + inset;
+        f.draw(canvas, sel.name, textLeft, descBox.top + inset, scale,
+                descNameColor(), descShadowColor());
+        float descScale = scale * 0.9f;
+        float lineY = descBox.top + inset + GbaFont.LINE_HEIGHT * scale * 1.15f;
+        for (String line : wrapText(f, itemDescription(sel.id), descScale,
+                descBox.right - inset - textLeft)) {
+            if (lineY + GbaFont.LINE_HEIGHT * descScale > descBox.bottom - inset * 0.5f) {
+                break;
+            }
+            f.draw(canvas, line, textLeft, lineY, descScale, descTextColor(), descShadowColor());
+            lineY += GbaFont.LINE_HEIGHT * descScale * 1.05f;
         }
     }
 
@@ -1025,6 +2328,10 @@ public final class DualScreenView extends View {
         }
 
         float inset = body.width() * 0.045f;
+        // Like the real card's tilemap, the text rows sit on solid lighter
+        // panel strips in the card's own palette family, so the dark text
+        // (with its light shadow) reads over the stripe art.
+        int panel = blendColor(bodyB[tier], 0xFFFFFFFF, 0.55f);
 
         // Title chip + ID number.
         RectF chip = new RectF(body.left + inset, body.top + inset,
@@ -1033,9 +2340,12 @@ public final class DualScreenView extends View {
         paint.setColor(0xFF68A8E0);
         canvas.drawRoundRect(chip, 8, 8, paint);
         f.draw(canvas, "TRAINER CARD", chip.left + 20, chip.top + 8, scale, TEXT_DARK, 0xFF4880B8);
+        float idLeft = body.right - inset - f.measure("IDNo.00000", scale);
+        paint.setColor(panel);
+        canvas.drawRoundRect(new RectF(idLeft - 12, chip.top,
+                body.right - inset + 12, chip.bottom), 8, 8, paint);
         f.draw(canvas, "IDNo." + String.format("%05d", state.trainerId),
-                body.right - inset - f.measure("IDNo.00000", scale), chip.top + 8,
-                scale, TEXT_DARK, TEXT_SHADOW);
+                idLeft, chip.top + 8, scale, TEXT_DARK, TEXT_SHADOW);
 
         // Trainer portrait, right side.
         float picSize = body.height() * 0.42f;
@@ -1053,8 +2363,13 @@ public final class DualScreenView extends View {
             canvas.drawBitmap(trainerPic, null, picRect, pixelPaint);
         }
 
-        // Name with underline and stars.
+        // Name with underline and stars, on its panel strip.
         float nameY = chip.bottom + body.height() * 0.075f;
+        paint.setColor(panel);
+        canvas.drawRoundRect(new RectF(body.left + inset * 0.55f,
+                nameY - GbaFont.LINE_HEIGHT * scale * 0.3f,
+                body.left + body.width() * 0.58f,
+                nameY + GbaFont.LINE_HEIGHT * scale * 1.4f), 8, 8, paint);
         f.draw(canvas, "NAME: " + state.playerName, body.left + inset, nameY,
                 scale * 1.1f, TEXT_DARK, TEXT_SHADOW);
         float underlineY = nameY + GbaFont.LINE_HEIGHT * scale * 1.1f + 6;
@@ -1076,6 +2391,12 @@ public final class DualScreenView extends View {
         float rowStep = body.height() * 0.135f;
         float valueRight = body.left + body.width() * 0.55f;
         for (int i = 0; i < rowsData.length; i++) {
+            // One panel strip per row, like the card tilemap.
+            paint.setColor(panel);
+            canvas.drawRoundRect(new RectF(body.left + inset * 0.55f,
+                    rowY + i * rowStep - GbaFont.LINE_HEIGHT * scale * 0.3f,
+                    valueRight + inset * 0.45f,
+                    rowY + i * rowStep + GbaFont.LINE_HEIGHT * scale * 1.3f), 8, 8, paint);
             f.draw(canvas, rowsData[i][0], body.left + inset, rowY + i * rowStep,
                     scale, TEXT_DARK, TEXT_SHADOW);
             float w = f.measure(rowsData[i][1], scale);
@@ -1083,11 +2404,20 @@ public final class DualScreenView extends View {
                     scale, TEXT_DARK, TEXT_SHADOW);
         }
 
-        // BADGES stripe with the real sprites.
+        // BADGES band with the real sprites: like the real card, the badge
+        // row gets its own solid light band (the same panel treatment as
+        // the text rows) so the sprites read over the stripe art.
         float badgesY = body.bottom - body.height() * 0.20f;
-        f.draw(canvas, "BADGES", body.left + inset, badgesY - GbaFont.LINE_HEIGHT * scale * 0.85f - 6,
-                scale * 0.85f, TEXT_WHITE, border[tier]);
         float badgeSize = body.height() * 0.145f;
+        float badgeLabelScale = scale * 0.85f;
+        float badgeLabelY = badgesY - GbaFont.LINE_HEIGHT * badgeLabelScale - 6;
+        paint.setColor(panel);
+        canvas.drawRoundRect(new RectF(body.left + inset * 0.55f,
+                badgeLabelY - GbaFont.LINE_HEIGHT * badgeLabelScale * 0.3f,
+                body.right - inset * 0.55f,
+                badgesY + badgeSize * 1.12f), 8, 8, paint);
+        f.draw(canvas, "BADGES", body.left + inset, badgeLabelY,
+                badgeLabelScale, TEXT_DARK, TEXT_SHADOW);
         float badgeStep = (body.width() - inset * 2) / 8f;
         for (int i = 0; i < 8; i++) {
             if ((state.badgeFlags & (1 << i)) == 0 || badgeSprites == null) {

@@ -6428,3 +6428,55 @@ void IsLastMonThatKnowsSurf(void)
             gSpecialVar_Result = TRUE;
     }
 }
+
+#ifdef PLATFORM_SDL2
+// Accessors for the dual-screen bridge: the bottom screen renders the real
+// party menu from the same data the game uses (see platform/dualscreen.h).
+// Kinds: 0 main, 1 main no-HP (eggs), 2 wide, 3 wide no-HP, 4 wide empty.
+const u8 *DualScreen_GetPartySlotTilemap(u32 kind, u32 *width, u32 *height)
+{
+    *width = kind <= 1 ? 10 : 18;
+    *height = kind <= 1 ? 7 : 3;
+    switch (kind)
+    {
+    case 0:  return sSlotTilemap_Main;
+    case 1:  return sSlotTilemap_MainNoHP;
+    case 2:  return sSlotTilemap_Wide;
+    case 3:  return sSlotTilemap_WideNoHP;
+    default: return sSlotTilemap_WideEmpty;
+    }
+}
+
+const u32 *DualScreen_GetHeldItemGfx(void)
+{
+    return sHeldItemGfx;
+}
+
+const u16 *DualScreen_GetHeldItemPal(void)
+{
+    return sHeldItemPalette;
+}
+
+// Battle-order bookkeeping for a switch chosen on the bottom screen: exactly
+// what TrySwitchInPokemon does, minus the physical party permutation (the
+// in-battle menu's reorder-then-restore nets out to no change, so with no
+// menu open there is nothing to permute). monId is a field party index;
+// gBattlePartyCurrentOrder was already loaded from the controller message
+// by PlayerHandleChoosePokemon's takeover path.
+void DualScreen_BattleSwitchOrder(u8 monId)
+{
+    u8 slot, newSlot;
+
+    for (slot = 0; slot < PARTY_SIZE; slot++)
+    {
+        if (GetPartyIdFromBattleSlot(slot) == monId)
+            break;
+    }
+    if (slot >= PARTY_SIZE)
+        return;
+    newSlot = GetPartyIdFromBattlePartyId(gBattlerPartyIndexes[gBattlerInMenuId]);
+    SwitchPartyMonSlots(newSlot, slot);
+    gSelectedMonPartyId = monId;
+    gPartyMenuUseExitCallback = TRUE;
+}
+#endif

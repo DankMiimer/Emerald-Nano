@@ -21,6 +21,11 @@ public final class DualScreenState {
         public int pp;
         public int maxPp;
         public int type;
+        public int power;    // 0 = status move (shown as em dash)
+        public int accuracy; // 0 = never misses (shown as em dash)
+        // Effectiveness class vs the current foes ([0] left, [1] right):
+        // -1 no hint, 0 no effect, 1 not very, 2 normal, 3 super.
+        public final int[] eff = {-1, -1};
     }
 
     public static final class Mon {
@@ -50,6 +55,15 @@ public final class DualScreenState {
     public int battleMenu; // 0 none, 1 action select, 2 move select
     public int actionCursor;
     public int moveCursor;
+    public boolean battleDouble;
+    public boolean battleCanUseItems; // battle type allows the bag at all
+    public boolean battleCanCatch;    // wild battle: balls pocket is legal
+    public int battleSub;             // 0 none, 1 bag wait, 2 party wait
+    public int battleSubCase;         // PARTY_ACTION_* for the party wait
+    public int battleSubResult;       // DS_BMENU_RESULT_* of last submission
+    public int battleSubSeq;
+    public final int[] battleActive = {-1, -1}; // party indexes on the field
+    public int battlePrevSel = 6;     // partner's already-chosen switch slot
     public String playerName = "";
     public int playerGender;
     public int money;
@@ -69,6 +83,8 @@ public final class DualScreenState {
     public final List<List<BagItem>> bag = new ArrayList<>();
     public Mon battlePlayerMon;
     public Mon battleEnemyMon;
+    public Mon battlePlayerMon2; // doubles: the menu battler's partner
+    public Mon battleEnemyMon2;  // doubles: the right-side foe
 
     private static Mon parseMon(JSONObject o) throws JSONException {
         Mon m = new Mon();
@@ -108,6 +124,13 @@ public final class DualScreenState {
                 move.pp = mo.optInt("pp");
                 move.maxPp = mo.optInt("maxPp");
                 move.type = mo.optInt("type");
+                move.power = mo.optInt("pw");
+                move.accuracy = mo.optInt("ac");
+                JSONArray eff = mo.optJSONArray("eff");
+                if (eff != null && eff.length() >= 2) {
+                    move.eff[0] = eff.getInt(0);
+                    move.eff[1] = eff.getInt(1);
+                }
                 m.moves.add(move);
             }
         }
@@ -169,10 +192,27 @@ public final class DualScreenState {
                 state.battleMenu = battle.optInt("menu");
                 state.actionCursor = battle.optInt("actionCursor");
                 state.moveCursor = battle.optInt("moveCursor");
+                state.battleDouble = battle.optInt("double") != 0;
+                state.battleCanUseItems = battle.optInt("canUseItems") != 0;
+                state.battleCanCatch = battle.optInt("canCatch") != 0;
+                state.battleSub = battle.optInt("sub");
+                state.battleSubCase = battle.optInt("subCase");
+                state.battleSubResult = battle.optInt("subResult");
+                state.battleSubSeq = battle.optInt("subSeq");
+                JSONArray active = battle.optJSONArray("active");
+                if (active != null && active.length() >= 2) {
+                    state.battleActive[0] = active.getInt(0);
+                    state.battleActive[1] = active.getInt(1);
+                }
+                state.battlePrevSel = battle.optInt("prevSel", 6);
                 JSONObject p = battle.optJSONObject("playerMon");
                 if (p != null) state.battlePlayerMon = parseMon(p);
                 JSONObject e = battle.optJSONObject("enemyMon");
                 if (e != null) state.battleEnemyMon = parseMon(e);
+                JSONObject p2 = battle.optJSONObject("playerMon2");
+                if (p2 != null) state.battlePlayerMon2 = parseMon(p2);
+                JSONObject e2 = battle.optJSONObject("enemyMon2");
+                if (e2 != null) state.battleEnemyMon2 = parseMon(e2);
             }
         } catch (JSONException ignored) {
             // Torn/partial snapshot; keep whatever parsed.

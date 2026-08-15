@@ -55,6 +55,7 @@ public final class GbaFont {
         switch (c) {
         case '.': return 0xAD;
         case '-': return 0xAE;
+        case '—': return 0xAE; // em dash: the game's hyphen glyph
         case ',': return 0xB8;
         case '/': return 0xBA;
         case ':': return 0xF0;
