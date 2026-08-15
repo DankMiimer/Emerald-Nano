@@ -1137,33 +1137,6 @@ JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_n
     if (pixels == NULL)
         return NULL;
 
-    // The bottom four tile rows are the message strip: the CANCEL button
-    // chrome and message-box frame live in the tilemap there, but the tab
-    // offers neither. Stamp the strip with the layer's filler tile (the
-    // most frequent map entry) so only the staircase area keeps furniture.
-    {
-        u16 best = sTilemap[0];
-        int bestCount = 0;
-        for (ty = 0; ty < 16; ty++)
-        for (tx = 0; tx < 30; tx++)
-        {
-            u16 candidate = sTilemap[ty * 32 + tx];
-            int count = 0;
-            int i;
-            for (i = 0; i < 16 * 32; i++)
-                if (sTilemap[i] == candidate)
-                    count++;
-            if (count > bestCount)
-            {
-                bestCount = count;
-                best = candidate;
-            }
-        }
-        for (ty = 16; ty < 20; ty++)
-        for (tx = 0; tx < 30; tx++)
-            sTilemap[ty * 32 + tx] = best;
-    }
-
     for (ty = 0; ty < 20; ty++)
     for (tx = 0; tx < 30; tx++)
     {
@@ -1551,6 +1524,33 @@ JNIEXPORT jintArray JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_n
     pixels = malloc(240 * 160 * sizeof(jint));
     if (pixels == NULL)
         return NULL;
+
+    // The bottom four tile rows are the message strip: the CANCEL button
+    // well and message-box frame live in the tilemap there, but the tab
+    // offers neither. Stamp the strip with the layer's filler tile (the
+    // most frequent map entry) so only the staircase area keeps furniture.
+    {
+        u16 best = sTilemap[0];
+        int bestCount = 0;
+        for (ty = 0; ty < 16; ty++)
+        for (tx = 0; tx < 30; tx++)
+        {
+            u16 candidate = sTilemap[ty * 32 + tx];
+            int count = 0;
+            int i;
+            for (i = 0; i < 16 * 32; i++)
+                if (sTilemap[i] == candidate)
+                    count++;
+            if (count > bestCount)
+            {
+                bestCount = count;
+                best = candidate;
+            }
+        }
+        for (ty = 16; ty < 20; ty++)
+        for (tx = 0; tx < 30; tx++)
+            sTilemap[ty * 32 + tx] = best;
+    }
 
     for (ty = 0; ty < 20; ty++)
     for (tx = 0; tx < 30; tx++)
