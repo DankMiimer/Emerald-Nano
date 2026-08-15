@@ -397,6 +397,9 @@ public final class DualScreenView extends View {
         if (eff < 0 || eff == 3 || eff > 5) {
             return;
         }
+        if (DualScreenBridge.nativeGetPlatformSetting(DualScreenBridge.SETTING_BATTLE_HINTS) == 0) {
+            return; // hints are opt-in (SET tab)
+        }
         float u = Math.max(1f, Math.round(r / 2f));
         if (eff == 0) {
             drawPixelRows(canvas, CROSS_ROWS, false, cx - 2.5f * u, cy - 2.5f * u, u, 0xFF888E96);
@@ -2259,6 +2262,7 @@ public final class DualScreenView extends View {
         new SettingRow("FF MUSIC", DualScreenBridge.SETTING_FF_AUDIO, 1, "NORMAL", "SPED UP"),
         new SettingRow("VOLUME", DualScreenBridge.SETTING_VOLUME, 2, "0", "2", "4", "6", "8", "10"),
         new SettingRow("VOXEL 3D (RESTART)", DualScreenBridge.SETTING_VOXEL_RENDERER, 1, "OFF", "ON"),
+        new SettingRow("HINTS", DualScreenBridge.SETTING_BATTLE_HINTS, 1, "OFF", "ON"),
     };
     private float settingsScroll;
     private float settingsTouchDownY;

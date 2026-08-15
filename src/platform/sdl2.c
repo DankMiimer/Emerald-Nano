@@ -73,7 +73,7 @@ static bool sHasBorderBackgroundConfig;
 static u8 sBackgroundOrderVersion;
 // Dual-screen defaults: black background, touch controls hidden, battle
 // menus on the bottom screen, fast-forward leaves the music at normal tempo.
-static u8 sPlatformSettings[PLATFORM_SETTING_COUNT] = {0, 4, 0, 1, 1, 10, 1, 0, 0, 0, 0, 0, 0};
+static u8 sPlatformSettings[PLATFORM_SETTING_COUNT] = {0, 4, 0, 1, 1, 10, 1, 0, 0, 0, 0, 0, 0, 0};
 // The fast-forward speed as chosen in the SET tab, which is what belongs in the
 // config file. The R2 hotkey overrides the live setting without touching this,
 // so that StoreConfigFile - which writes every setting whenever any one of them
@@ -846,6 +846,8 @@ static void ReadConfigFile(void)
             sPlatformSettings[PLATFORM_SETTING_VOXEL_RENDERER] = value != 0;
         else if (sscanf(line, "fastForwardAudio=%u", &value) == 1)
             sPlatformSettings[PLATFORM_SETTING_FF_AUDIO] = value != 0;
+        else if (sscanf(line, "battleHints=%u", &value) == 1)
+            sPlatformSettings[PLATFORM_SETTING_BATTLE_HINTS] = value != 0;
     }
     fclose(configFile);
 }
@@ -871,6 +873,7 @@ static void StoreConfigFile(void)
     fprintf(configFile, "fastForward=%u\n", sFastForwardSetting);
     fprintf(configFile, "voxelRenderer=%u\n", sPlatformSettings[PLATFORM_SETTING_VOXEL_RENDERER]);
     fprintf(configFile, "fastForwardAudio=%u\n", sPlatformSettings[PLATFORM_SETTING_FF_AUDIO]);
+    fprintf(configFile, "battleHints=%u\n", sPlatformSettings[PLATFORM_SETTING_BATTLE_HINTS]);
     fclose(configFile);
 }
 

@@ -51,6 +51,7 @@ public final class DualScreenBridge {
     public static final int SETTING_FAST_FORWARD = 10;
     public static final int SETTING_VOXEL_RENDERER = 11;
     public static final int SETTING_FF_AUDIO = 12;
+    public static final int SETTING_BATTLE_HINTS = 13;
     public static final int SETTING_VOLUME = 5;
 
     /**

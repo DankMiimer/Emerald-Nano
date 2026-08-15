@@ -30,6 +30,7 @@ enum PlatformSetting
     PLATFORM_SETTING_FAST_FORWARD,    // 0 off, 1..3 = 2x..4x game speed
     PLATFORM_SETTING_VOXEL_RENDERER,  // 0 classic 2D, 1 voxel 3D (applies on restart)
     PLATFORM_SETTING_FF_AUDIO,        // 0 music keeps its normal tempo while fast-forwarding, 1 music speeds up too
+    PLATFORM_SETTING_BATTLE_HINTS,    // 0 off, 1 effectiveness carets on the bottom-screen move grid
     PLATFORM_SETTING_COUNT,
 };
 
