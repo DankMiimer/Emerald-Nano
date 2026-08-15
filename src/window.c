@@ -265,8 +265,16 @@ void FreeAllWindowBuffers(void)
 
 void CopyWindowToVram(u8 windowId, u8 mode)
 {
-    struct Window windowLocal = gWindows[windowId];
-    u16 windowSize = 32 * (windowLocal.window.width * windowLocal.window.height);
+    struct Window windowLocal;
+    u16 windowSize;
+
+    // On GBA a WINDOW_NONE (0xFF) id read harmless garbage past gWindows;
+    // in a hosted process the stray read can hit an unmapped page.
+    if (windowId >= WINDOWS_MAX)
+        return;
+
+    windowLocal = gWindows[windowId];
+    windowSize = 32 * (windowLocal.window.width * windowLocal.window.height);
 
     switch (mode)
     {
@@ -288,6 +296,9 @@ void CopyWindowRectToVram(u32 windowId, u32 mode, u32 x, u32 y, u32 w, u32 h)
     struct Window windowLocal;
     int rectSize;
     int rectPos;
+
+    if (windowId >= WINDOWS_MAX)
+        return;
 
     if (w != 0 && h != 0)
     {
@@ -318,7 +329,12 @@ void CopyWindowRectToVram(u32 windowId, u32 mode, u32 x, u32 y, u32 w, u32 h)
 
 void PutWindowTilemap(u8 windowId)
 {
-    struct Window windowLocal = gWindows[windowId];
+    struct Window windowLocal;
+
+    if (windowId >= WINDOWS_MAX)
+        return;
+
+    windowLocal = gWindows[windowId];
 
     WriteSequenceToBgTilemapBuffer(
         windowLocal.window.bg,
@@ -333,9 +349,15 @@ void PutWindowTilemap(u8 windowId)
 
 void PutWindowRectTilemapOverridePalette(u8 windowId, u8 x, u8 y, u8 width, u8 height, u8 palette)
 {
-    struct Window windowLocal = gWindows[windowId];
-    u16 currentRow = windowLocal.window.baseBlock + (y * windowLocal.window.width) + x + GetBgAttribute(windowLocal.window.bg, BG_ATTR_BASETILE);
+    struct Window windowLocal;
+    u16 currentRow;
     int i;
+
+    if (windowId >= WINDOWS_MAX)
+        return;
+
+    windowLocal = gWindows[windowId];
+    currentRow = windowLocal.window.baseBlock + (y * windowLocal.window.width) + x + GetBgAttribute(windowLocal.window.bg, BG_ATTR_BASETILE);
 
     for (i = 0; i < height; ++i)
     {
@@ -356,7 +378,12 @@ void PutWindowRectTilemapOverridePalette(u8 windowId, u8 x, u8 y, u8 width, u8 h
 // Fills a window with transparent tiles.
 void ClearWindowTilemap(u8 windowId)
 {
-    struct Window windowLocal = gWindows[windowId];
+    struct Window windowLocal;
+
+    if (windowId >= WINDOWS_MAX)
+        return;
+
+    windowLocal = gWindows[windowId];
 
     FillBgTilemapBufferRect(
         windowLocal.window.bg,
@@ -370,9 +397,15 @@ void ClearWindowTilemap(u8 windowId)
 
 void PutWindowRectTilemap(u8 windowId, u8 x, u8 y, u8 width, u8 height)
 {
-    struct Window windowLocal = gWindows[windowId];
-    u16 currentRow = windowLocal.window.baseBlock + (y * windowLocal.window.width) + x + GetBgAttribute(windowLocal.window.bg, BG_ATTR_BASETILE);
+    struct Window windowLocal;
+    u16 currentRow;
     int i;
+
+    if (windowId >= WINDOWS_MAX)
+        return;
+
+    windowLocal = gWindows[windowId];
+    currentRow = windowLocal.window.baseBlock + (y * windowLocal.window.width) + x + GetBgAttribute(windowLocal.window.bg, BG_ATTR_BASETILE);
 
     for (i = 0; i < height; ++i)
     {
