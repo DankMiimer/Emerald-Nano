@@ -1373,21 +1373,78 @@ public final class DualScreenView extends View {
                 rect.height() * 0.1f, mon.hp, mon.maxHp);
         f.draw(canvas, mon.hp + "/" + mon.maxHp, textLeft,
                 barTop + rect.height() * 0.1f + 8, scale * 0.85f, TEXT_DARK, TEXT_SHADOW);
+        float underBarTop = barTop + rect.height() * 0.1f + GbaFont.LINE_HEIGHT * scale * 0.85f + 14;
         if (namePrefix.isEmpty()) {
             // Player's mon: slim exp bar, Emerald blue.
-            float expTop = barTop + rect.height() * 0.1f + GbaFont.LINE_HEIGHT * scale * 0.85f + 14;
             float expFullW = rect.right - inset - textLeft;
             paint.setColor(0xFFE8E8E0);
-            canvas.drawRoundRect(new RectF(textLeft, expTop, textLeft + expFullW, expTop + 8), 4, 4, paint);
+            canvas.drawRoundRect(new RectF(textLeft, underBarTop, textLeft + expFullW, underBarTop + 8), 4, 4, paint);
             paint.setColor(0xFF3890F0);
-            canvas.drawRoundRect(new RectF(textLeft, expTop,
-                    textLeft + Math.max(expFullW * mon.expPct / 100f, 4), expTop + 8), 4, 4, paint);
+            canvas.drawRoundRect(new RectF(textLeft, underBarTop,
+                    textLeft + Math.max(expFullW * mon.expPct / 100f, 4), underBarTop + 8), 4, 4, paint);
+        } else {
+            // Foe's mon: the weakness strip takes the exp bar's slot, ending
+            // above the type badges in the card's bottom-right corner.
+            drawWeaknessRow(canvas, mon, textLeft, underBarTop,
+                    rect.right - inset, rect.bottom - inset - badgeH - rect.height() * 0.02f,
+                    scale);
         }
         String status = statusLabel(mon.status, mon.hp);
         if (status != null) {
             float w = f.measure(status, scale * 0.85f);
             f.draw(canvas, status, rect.right - inset - w,
                     barTop + rect.height() * 0.1f + 8, scale * 0.85f, HP_RED, TEXT_SHADOW);
+        }
+    }
+
+    /**
+     * "WEAK" strip on a foe card: the attacking types this mon takes
+     * super-effective damage from, 4x entries first and carrying the same
+     * double caret the move grid uses for 4x. Icons scale down to fit the
+     * strip, and entries that still would not fit are dropped from the end —
+     * the 2x tail — so the doubles layout's narrow cards just show fewer.
+     */
+    private void drawWeaknessRow(Canvas canvas, DualScreenState.Mon mon, float left,
+                                 float top, float right, float bottom, float scale) {
+        GbaFont f = font();
+        if (f == null || mon.weaknesses.isEmpty() || bottom <= top
+                || DualScreenBridge.nativeGetPlatformSetting(DualScreenBridge.SETTING_BATTLE_HINTS) == 0) {
+            return; // hints are opt-in (SET tab)
+        }
+        float band = bottom - top;
+        float labelScale = scale * 0.7f;
+        float labelW = f.measure("WEAK", labelScale) + band * 0.25f;
+
+        // Entry widths, in icon-heights: the type icon (2:1, or 3.1:1 for the
+        // drawn-badge fallback when the icon sheet is unavailable), a gap, and
+        // for a 4x weakness the caret marker in between.
+        float iconU = typeIconBitmap(mon.weaknesses.get(0).type) != null ? 2f : 3.1f;
+        float units = 0;
+        for (DualScreenState.Weakness w : mon.weaknesses) {
+            units += iconU + (w.tier == 5 ? 1.1f : 0.35f);
+        }
+        float iconH = Math.min(band, (right - left - labelW) / Math.max(units, 0.001f));
+        if (iconH < band * 0.45f) {
+            iconH = band * 0.45f; // stop shrinking; drop the overflow instead
+        }
+        if (iconH <= 0 || left + labelW + iconH * iconU > right) {
+            return; // not even one icon fits
+        }
+
+        f.draw(canvas, "WEAK", left, top + (band - GbaFont.LINE_HEIGHT * labelScale) / 2f,
+                labelScale, 0xFF70707A, TEXT_SHADOW);
+        float x = left + labelW;
+        float y = top + (band - iconH) / 2f;
+        for (DualScreenState.Weakness w : mon.weaknesses) {
+            float entryW = iconH * (iconU + (w.tier == 5 ? 1.1f : 0.35f));
+            if (x + entryW - iconH * 0.35f > right) {
+                break;
+            }
+            drawTypeIcon(canvas, w.type, x, y, iconH);
+            if (w.tier == 5) {
+                drawEffMarker(canvas, 5, x + iconH * (iconU + 0.35f), y + iconH / 2f, iconH * 0.2f);
+            }
+            x += entryW;
         }
     }
 

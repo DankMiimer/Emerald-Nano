@@ -29,6 +29,12 @@ public final class DualScreenState {
         public final int[] eff = {-1, -1};
     }
 
+    /** One entry of a foe's weakness list: an attacking type and its tier. */
+    public static final class Weakness {
+        public int type;
+        public int tier; // 4 = double, 5 = quad (same tiers as Move.eff)
+    }
+
     public static final class Mon {
         public int species;
         public int dex;
@@ -48,6 +54,9 @@ public final class DualScreenState {
         public String nature = "";
         public String ability = "";
         public final List<Move> moves = new ArrayList<>();
+        // Types this mon takes super-effective damage from, 4x first. Only
+        // sent for foes; empty everywhere else.
+        public final List<Weakness> weaknesses = new ArrayList<>();
     }
 
     public boolean inGame;
@@ -133,6 +142,16 @@ public final class DualScreenState {
                     move.eff[1] = eff.getInt(1);
                 }
                 m.moves.add(move);
+            }
+        }
+        JSONArray weak = o.optJSONArray("weak");
+        if (weak != null) {
+            for (int i = 0; i < weak.length(); i++) {
+                JSONObject wo = weak.getJSONObject(i);
+                Weakness w = new Weakness();
+                w.type = wo.optInt("t");
+                w.tier = wo.optInt("m");
+                m.weaknesses.add(w);
             }
         }
         return m;

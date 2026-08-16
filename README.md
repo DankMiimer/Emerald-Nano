@@ -43,6 +43,8 @@ save out before uninstalling, since Android deletes it along with the app.
   stats, nature, ability, moves and exp.
 - **Gen 4 style battles**: use touch on the bottom screen to select
   between options and moves.
+- **Battle hints** (off by default): effectiveness carets on each move
+  and the foe's weaknesses on its card.
 - **Map**: the Hoenn Pokénav map with your live position and the name of
   where you are.
 - **Bag**: all five pockets with live quantities.

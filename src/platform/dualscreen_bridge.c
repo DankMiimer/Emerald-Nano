@@ -563,24 +563,17 @@ static void WritePartyMonJson(struct JsonWriter *w, struct Pokemon *mon)
     JsonPut(w, "]}");
 }
 
-// Effectiveness class of a damaging move against one foe, straight from the
-// engine's own gTypeEffectiveness table (battle_main.c): -1 no hint (status
-// move or no foe), 0 no effect, 1 not very effective, 2 normal, 3 super
-// effective. Dual types multiply; the rows behind the TYPE_FORESIGHT marker
-// (the Ghost immunities) are applied like the normal ones. Abilities such as
-// Levitate are deliberately not consulted: this is a table lookup, not a
-// damage calc.
-static int MoveEffClass(u16 move, const struct BattlePokemon *def)
+// Type-chart multiplier of one attacking type against a defender, in the
+// engine's own tenths (TYPE_MUL_NORMAL == 10), straight from
+// gTypeEffectiveness (battle_main.c). Dual types multiply; the rows behind
+// the TYPE_FORESIGHT marker (the Ghost immunities) are applied like the
+// normal ones. Abilities such as Levitate are deliberately not consulted:
+// this is a table lookup, not a damage calc.
+static int TypeMulAgainst(u8 atkType, const struct BattlePokemon *def)
 {
     int mul = TYPE_MUL_NORMAL;
-    u8 atkType;
     int i;
 
-    if (def == NULL || move == MOVE_NONE || move >= MOVES_COUNT)
-        return -1;
-    if (gBattleMoves[move].power == 0)
-        return -1; // status moves carry no hint
-    atkType = gBattleMoves[move].type;
     for (i = 0; TYPE_EFFECT_ATK_TYPE(i) != TYPE_ENDTABLE; i += 3)
     {
         if (TYPE_EFFECT_ATK_TYPE(i) == TYPE_FORESIGHT)
@@ -592,8 +585,13 @@ static int MoveEffClass(u16 move, const struct BattlePokemon *def)
         if (def->types[1] != def->types[0] && TYPE_EFFECT_DEF_TYPE(i) == def->types[1])
             mul = mul * TYPE_EFFECT_MULTIPLIER(i) / 10;
     }
-    // Multiplier tiers, so the UI can split 2x from 4x (and 1/2 from 1/4):
-    // 0 immune, 1 quarter, 2 half, 3 neutral, 4 double, 5 quad.
+    return mul;
+}
+
+// Multiplier tiers, so the UI can split 2x from 4x (and 1/2 from 1/4):
+// 0 immune, 1 quarter, 2 half, 3 neutral, 4 double, 5 quad.
+static int MulTier(int mul)
+{
     if (mul == 0)
         return 0;
     if (mul < 5)
@@ -607,10 +605,51 @@ static int MoveEffClass(u16 move, const struct BattlePokemon *def)
     return 5;
 }
 
+// Effectiveness class of a damaging move against one foe: -1 no hint (status
+// move or no foe), otherwise a MulTier value.
+static int MoveEffClass(u16 move, const struct BattlePokemon *def)
+{
+    if (def == NULL || move == MOVE_NONE || move >= MOVES_COUNT)
+        return -1;
+    if (gBattleMoves[move].power == 0)
+        return -1; // status moves carry no hint
+    return MulTier(TypeMulAgainst(gBattleMoves[move].type, def));
+}
+
+// Attacking types this mon takes super-effective damage from, as
+// [{"t":type,"m":tier}] with the 4x entries ahead of the 2x ones. Same tier
+// numbering as MoveEffClass, so the UI can reuse its markers. TYPE_MYSTERY is
+// a filler row in the chart, never a real attacking type.
+static void WriteWeaknessesJson(struct JsonWriter *w, const struct BattlePokemon *def)
+{
+    int tier;
+    bool32 first = TRUE;
+
+    JsonPut(w, ",\"weak\":[");
+    for (tier = 5; tier >= 4; tier--)
+    {
+        u8 atkType;
+        for (atkType = 0; atkType < NUMBER_OF_MON_TYPES; atkType++)
+        {
+            if (atkType == TYPE_MYSTERY)
+                continue;
+            if (MulTier(TypeMulAgainst(atkType, def)) != tier)
+                continue;
+            if (!first)
+                JsonPut(w, ",");
+            first = FALSE;
+            JsonPut(w, "{\"t\":%u,\"m\":%d}", atkType, tier);
+        }
+    }
+    JsonPut(w, "]");
+}
+
 // foes: up to two current opposing battlers ([0] left, [1] right; NULL when
 // absent/fainted) for the per-move effectiveness hints, or NULL for none.
+// withWeak adds this mon's own weakness list (foe cards only — the player's
+// card has no room for it).
 static void WriteBattleMonJson(struct JsonWriter *w, struct BattlePokemon *mon,
-                               const struct BattlePokemon *const *foes)
+                               const struct BattlePokemon *const *foes, bool32 withWeak)
 {
     char text[24];
     u16 species = mon->species;
@@ -665,7 +704,10 @@ static void WriteBattleMonJson(struct JsonWriter *w, struct BattlePokemon *mon,
         }
         JsonPut(w, "}");
     }
-    JsonPut(w, "]}");
+    JsonPut(w, "]");
+    if (withWeak)
+        WriteWeaknessesJson(w, mon);
+    JsonPut(w, "}");
 }
 
 // Reads pockets straight from the save block rather than through
@@ -915,18 +957,18 @@ static void BuildSnapshot(char *buffer, int capacity)
                     }
 
                     JsonPut(w, "\"playerMon\":");
-                    WriteBattleMonJson(w, &gBattleMons[playerBattler], foes);
+                    WriteBattleMonJson(w, &gBattleMons[playerBattler], foes, FALSE);
                     JsonPut(w, ",\"enemyMon\":");
-                    WriteBattleMonJson(w, &gBattleMons[enemyBattler], NULL);
+                    WriteBattleMonJson(w, &gBattleMons[enemyBattler], NULL, TRUE);
                     if (playerMon2 >= 0)
                     {
                         JsonPut(w, ",\"playerMon2\":");
-                        WriteBattleMonJson(w, &gBattleMons[playerMon2], NULL);
+                        WriteBattleMonJson(w, &gBattleMons[playerMon2], NULL, FALSE);
                     }
                     if (enemyMon2 >= 0)
                     {
                         JsonPut(w, ",\"enemyMon2\":");
-                        WriteBattleMonJson(w, &gBattleMons[enemyMon2], NULL);
+                        WriteBattleMonJson(w, &gBattleMons[enemyMon2], NULL, TRUE);
                     }
                 }
                 JsonPut(w, "},");
