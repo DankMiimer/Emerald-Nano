@@ -42,6 +42,11 @@ public final class DualScreenView extends View {
     // Repaint pace while a battle menu is open, so the cursor ring tracks the
     // d-pad rather than the snapshot pump.
     private static final int CURSOR_REPAINT_MS = 33;
+    // How long a closed menu is held on screen before the idle cards take
+    // over, to ride out the gap between one battle menu and the next.
+    private static final int MENU_HOLD_MS = 180;
+    private int lastLiveMenu;
+    private long lastLiveMenuMs;
     private static final int BAR_CREAM = 0xFFF8F0B0;
     private static final int BAR_CREAM_DARK = 0xFFE8CE7A;
     private static final int BAR_BORDER = 0xFFA88848;
@@ -834,29 +839,31 @@ public final class DualScreenView extends View {
         if (now - lastKeyQueueMs < 350) {
             return; // let the previous selection land first
         }
-        if (state.battleMenu != battleButtonsMenu || state.battleMenu == 0) {
+        int menu = liveMenu();
+        if (menu != battleButtonsMenu || menu == 0) {
             return;
         }
-        if (battleCancel.contains(x, y) && state.battleMenu == 2) {
+        if (battleCancel.contains(x, y) && menu == 2) {
             lastKeyQueueMs = now;
             DualScreenBridge.nativeQueueKeys(new int[] {KEY_B, 0});
             return;
         }
         for (int i = 0; i < 4; i++) {
             if (battleButtons[i].contains(x, y) && !battleButtons[i].isEmpty()) {
-                int cursor = state.battleMenu == 1 ? state.actionCursor : state.moveCursor;
-                if (state.battleMenu == 1 && i == 3 && state.battleKind == 1) {
+                int cursor = menu == 1 ? liveCursor(1, state.actionCursor)
+                        : liveCursor(2, state.moveCursor);
+                if (menu == 1 && i == 3 && state.battleKind == 1) {
                     return; // RUN is disabled in trainer battles
                 }
                 lastKeyQueueMs = now;
-                if (state.battleMenu == 1) {
+                if (menu == 1) {
                     // Pressed-in visual on the command buttons.
                     battlePressedCmd = i;
                     removeCallbacks(battlePressReset);
                     postDelayed(battlePressReset, 220);
                     invalidate();
                 }
-                if (state.battleMenu == 1 && i == 1 && state.battleCanUseItems) {
+                if (menu == 1 && i == 1 && state.battleCanUseItems) {
                     // BAG: arm the takeover, then walk the cursor as usual.
                     // The battle bag opens down here instead of the GBA bag.
                     battlePanel = 1;
@@ -865,7 +872,7 @@ public final class DualScreenView extends View {
                     battleBagScroll = 0;
                     battleArmMs = now;
                     DualScreenBridge.nativeBattleArm(1);
-                } else if (state.battleMenu == 1 && i == 2) {
+                } else if (menu == 1 && i == 2) {
                     // POKéMON: same, with the party staircase down here.
                     battlePanel = 2;
                     battleArmMs = now;
@@ -1135,6 +1142,25 @@ public final class DualScreenView extends View {
      * when the fast read reports no menu, or a different one than we are
      * drawing.
      */
+    /**
+     * The menu the engine has open right now. Backing out of one leaves a
+     * frame or two where neither is open before the next one appears, and at
+     * the snapshot's cadence that blip was long enough to flash the idle
+     * cards up. Prefer the per-frame publish, and hold the last menu briefly
+     * across a gap so the transition doesn't drop to idle and back.
+     */
+    private int liveMenu() {
+        long now = System.currentTimeMillis();
+        int packed = DualScreenBridge.nativeGetBattleCursor();
+        int menu = packed >= 0 ? (packed >> 16) & 0xFF : state.battleMenu;
+        if (menu != 0) {
+            lastLiveMenu = menu;
+            lastLiveMenuMs = now;
+            return menu;
+        }
+        return now - lastLiveMenuMs < MENU_HOLD_MS ? lastLiveMenu : 0;
+    }
+
     private int liveCursor(int menu, int fallback) {
         int packed = DualScreenBridge.nativeGetBattleCursor();
         if (packed < 0 || ((packed >> 16) & 0xFF) != menu) {
@@ -1735,7 +1761,8 @@ public final class DualScreenView extends View {
         for (RectF r : battleButtons) r.setEmpty();
         battleCancel.setEmpty();
         battleUseButton.setEmpty();
-        battleButtonsMenu = state.battleMenu;
+        int menu = liveMenu();
+        battleButtonsMenu = menu;
 
         // Gen 4-style takeover panels own the whole bottom screen.
         if (battlePanel == 1) {
@@ -1750,16 +1777,16 @@ public final class DualScreenView extends View {
         DualScreenState.Mon self = state.battlePlayerMon;
         float gridTop = pad;
 
-        if (state.battleMenu == 0) {
+        if (menu == 0) {
             drawBattleIdle(canvas, pad, scale);
             return;
         }
 
-        if (state.battleMenu == 1) {
+        if (menu == 1) {
             drawBattleCommands(canvas, pad, scale);
         } else {
             // Move grid: name, type icon, PP, PWR/ACC, effectiveness hint.
-            boolean active = state.battleMenu == 2;
+            boolean active = menu == 2;
             int cursor = liveCursor(2, state.moveCursor);
             float cancelH = active ? contentHeight * 0.085f : 0;
             float cellH = (contentHeight - gridTop - pad * 2 - cancelH - (active ? pad : 0)) / 2;
