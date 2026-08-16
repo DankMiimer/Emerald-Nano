@@ -55,8 +55,8 @@ runtime.
 
 The gear tab on the bottom screen holds the mod's settings: background
 art or plain black/white, widescreen, touch-control overlay, battle menu
-placement, fast forward, volume, and the experimental voxel renderer.
-Changes are saved immediately and survive a restart.
+placement, fast forward, fast-forward music pitch, volume, and battle
+hints. Changes are saved immediately and survive a restart.
 
 ## Building (Linux / WSL)
 
@@ -87,7 +87,8 @@ asset-free APK, run `tools/dualscreen/package_release.sh <your_rom.gba>`.
 
 Upstream's experimental 2.5D voxel renderer is inherited and available on
 the Linux build via `./pokeemerald --voxel` (see the multiplatform repo
-for details).
+for details). It is not offered on Android: it is not ready, so the
+setting is held out of the SET tab and forced off there.
 
 ## How it works
 

@@ -843,7 +843,11 @@ static void ReadConfigFile(void)
         else if (sscanf(line, "fastForward=%u", &value) == 1 && value <= 3)
             sPlatformSettings[PLATFORM_SETTING_FAST_FORWARD] = sFastForwardSetting = value;
         else if (sscanf(line, "voxelRenderer=%u", &value) == 1)
-            sPlatformSettings[PLATFORM_SETTING_VOXEL_RENDERER] = value != 0;
+            // Consumed but forced off: the voxel renderer is not shipping yet,
+            // so the SET tab no longer offers it and a config left over from a
+            // build that did must not strand anyone in 3D. StoreConfigFile
+            // writes the cleared value back out.
+            sPlatformSettings[PLATFORM_SETTING_VOXEL_RENDERER] = 0;
         else if (sscanf(line, "fastForwardAudio=%u", &value) == 1)
             sPlatformSettings[PLATFORM_SETTING_FF_AUDIO] = value != 0;
         else if (sscanf(line, "battleHints=%u", &value) == 1)
