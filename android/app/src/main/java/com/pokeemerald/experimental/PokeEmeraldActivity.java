@@ -7,6 +7,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Display;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -49,6 +50,29 @@ public class PokeEmeraldActivity extends SDLActivity {
 
     private GbaControlsView controls;
 
+    // Button navigation of the bottom screen. Gamepad buttons do not
+    // auto-repeat on Android, so a held direction is repeated here or a long
+    // bag list would need one press per row.
+    private static final int NAV_NONE = -1;
+    private static final long NAV_REPEAT_DELAY_MS = 400;
+    private static final long NAV_REPEAT_INTERVAL_MS = 120;
+    private int navHeldKey = KeyEvent.KEYCODE_UNKNOWN;
+    private final Handler navHandler = new Handler(Looper.getMainLooper());
+    private final Runnable navRepeat = new Runnable() {
+        @Override
+        public void run() {
+            // Stops on its own if the key was released, the panel closed, or
+            // the bottom screen went away, so it can never run loose.
+            if (navHeldKey == KeyEvent.KEYCODE_UNKNOWN
+                    || presentation == null || !presentation.isCapturingKeys()) {
+                navHeldKey = KeyEvent.KEYCODE_UNKNOWN;
+                return;
+            }
+            presentation.navigate(navAction(navHeldKey));
+            navHandler.postDelayed(this, NAV_REPEAT_INTERVAL_MS);
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -72,6 +96,8 @@ public class PokeEmeraldActivity extends SDLActivity {
     @Override
     protected void onPause() {
         snapshotHandler.removeCallbacks(snapshotPump);
+        navHandler.removeCallbacks(navRepeat);
+        navHeldKey = KeyEvent.KEYCODE_UNKNOWN;
         dismissBottomScreen();
         super.onPause();
     }
@@ -128,6 +154,63 @@ public class PokeEmeraldActivity extends SDLActivity {
         if (presentation != null) {
             presentation.dismiss();
             presentation = null;
+        }
+    }
+
+    /**
+     * Physical buttons drive the bottom screen while a battle takeover panel
+     * is open. SDLActivity.dispatchKeyEvent only defers to super, which is
+     * what eventually reaches SDL's surface, so intercepting here pre-empts
+     * the game without the Presentation ever taking real key focus - it stays
+     * FLAG_NOT_FOCUSABLE.
+     *
+     * Only key-downs are consumed. The matching up is always passed through,
+     * because SDL keeps a held-button mask: swallowing the release of a
+     * button the game had already seen pressed would latch it down forever.
+     * An up SDL never saw a down for just clears a bit that is already clear.
+     */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        int action = presentation != null && presentation.isCapturingKeys()
+                ? navAction(event.getKeyCode()) : NAV_NONE;
+        if (action == NAV_NONE) {
+            return super.dispatchKeyEvent(event);
+        }
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            if (event.getRepeatCount() == 0) {
+                presentation.navigate(action);
+                if (action <= DualScreenView.NAV_RIGHT) {
+                    navHeldKey = event.getKeyCode();
+                    navHandler.removeCallbacks(navRepeat);
+                    navHandler.postDelayed(navRepeat, NAV_REPEAT_DELAY_MS);
+                }
+            }
+            return true;
+        }
+        if (event.getKeyCode() == navHeldKey) {
+            navHeldKey = KeyEvent.KEYCODE_UNKNOWN;
+            navHandler.removeCallbacks(navRepeat);
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    /**
+     * Android synthesizes DPAD key events for gamepad hat axes, so the d-pad
+     * arrives here whichever way the pad reports it. The analog sticks do not
+     * - the game maps those itself from SDL axis events - so the sticks stay
+     * with the game.
+     */
+    private static int navAction(int keyCode) {
+        switch (keyCode) {
+        case KeyEvent.KEYCODE_DPAD_UP:    return DualScreenView.NAV_UP;
+        case KeyEvent.KEYCODE_DPAD_DOWN:  return DualScreenView.NAV_DOWN;
+        case KeyEvent.KEYCODE_DPAD_LEFT:  return DualScreenView.NAV_LEFT;
+        case KeyEvent.KEYCODE_DPAD_RIGHT: return DualScreenView.NAV_RIGHT;
+        case KeyEvent.KEYCODE_BUTTON_A:
+        case KeyEvent.KEYCODE_Z:          return DualScreenView.NAV_CONFIRM;
+        case KeyEvent.KEYCODE_BUTTON_B:
+        case KeyEvent.KEYCODE_X:          return DualScreenView.NAV_CANCEL;
+        default:                          return NAV_NONE;
         }
     }
 

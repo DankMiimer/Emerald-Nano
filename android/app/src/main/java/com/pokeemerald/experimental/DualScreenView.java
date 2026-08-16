@@ -155,7 +155,17 @@ public final class DualScreenView extends View {
     private final RectF battleUseButton = new RectF();
     private final RectF[] battlePartyCards = {new RectF(), new RectF(), new RectF(),
                                               new RectF(), new RectF(), new RectF()};
+    private int battlePartyFocus = -1; // staircase slot under the button cursor
+    private int lastBattlePanel;       // to reset that focus when the panel changes
     private final SparseArray<Integer> battleCategoryCache = new SparseArray<>();
+
+    // Directions and actions the physical buttons can send down here.
+    public static final int NAV_UP = 0;
+    public static final int NAV_DOWN = 1;
+    public static final int NAV_LEFT = 2;
+    public static final int NAV_RIGHT = 3;
+    public static final int NAV_CONFIRM = 4;
+    public static final int NAV_CANCEL = 5;
 
     public DualScreenView(Context context) {
         super(context);
@@ -172,6 +182,143 @@ public final class DualScreenView extends View {
         state = next;
         syncBattlePanel();
         invalidate();
+    }
+
+    /**
+     * Whether the physical buttons belong to this screen right now. Only the
+     * battle takeover panels claim them: these are our own menus, and while
+     * one is open the engine is parked in a wait handler that reads no input,
+     * so nothing is competing for the buttons. Every other screen leaves them
+     * to the game.
+     */
+    public boolean isCapturingKeys() {
+        return state.inBattle && battlePanel != 0;
+    }
+
+    /**
+     * One button press routed from the activity. Movement updates the panel's
+     * own cursor; confirm and cancel are lowered to a tap at the focused
+     * rect, so the button and touch paths run exactly the same code.
+     */
+    public void navigate(int action) {
+        if (!isCapturingKeys()) {
+            return;
+        }
+        switch (action) {
+        case NAV_UP: case NAV_DOWN: case NAV_LEFT: case NAV_RIGHT:
+            if (battlePanel == 1) {
+                navBattleBag(action);
+            } else {
+                navBattleParty(action);
+            }
+            break;
+        case NAV_CONFIRM:
+            if (battlePanel == 1) {
+                if (!battleUseButton.isEmpty()) {
+                    handleBattleBagTouch(battleUseButton.centerX(), battleUseButton.centerY());
+                }
+            } else if (battlePartyFocus >= 0 && battlePartyFocus < state.party.size()) {
+                RectF card = battlePartyCards[battlePartyFocus];
+                handleBattlePartyTouch(card.centerX(), card.centerY());
+            }
+            break;
+        case NAV_CANCEL:
+            if (battlePanel == 1) {
+                cancelBattlePanel();
+            } else if (!battleCancel.isEmpty()) {
+                // The party panel's own back handling: panel 3 returns to the
+                // bag, panel 2 cancels. A forced send-out leaves this rect
+                // empty, and then there is deliberately no way out.
+                handleBattlePartyTouch(battleCancel.centerX(), battleCancel.centerY());
+            }
+            break;
+        default:
+            return;
+        }
+        invalidate();
+    }
+
+    /** Bag panel: up/down walk the item list, left/right change pocket. */
+    private void navBattleBag(int action) {
+        if (action == NAV_LEFT || action == NAV_RIGHT) {
+            int count = battleVisiblePockets().length;
+            if (count > 0) {
+                battleBagPocket = (battleBagPocket + (action == NAV_RIGHT ? 1 : count - 1)) % count;
+                battleBagScroll = 0;
+                battleBagSelected = -1;
+            }
+            return;
+        }
+        java.util.List<DualScreenState.BagItem> items = battleBagItems();
+        if (items.isEmpty()) {
+            return;
+        }
+        int next = battleBagSelected < 0 ? 0
+                : battleBagSelected + (action == NAV_DOWN ? 1 : -1);
+        battleBagSelected = Math.max(0, Math.min(items.size() - 1, next));
+        // Keep the selection on screen; the list is a uniform-row scroller.
+        float rowTop = battleBagSelected * battleBagRowH;
+        float viewH = battleBagListBottom - battleBagListTop;
+        if (rowTop < battleBagScroll) {
+            battleBagScroll = rowTop;
+        } else if (rowTop + battleBagRowH > battleBagScroll + viewH) {
+            battleBagScroll = rowTop + battleBagRowH - viewH;
+        }
+        battleBagScroll = Math.max(0, Math.min(battleBagMaxScroll(), battleBagScroll));
+    }
+
+    /**
+     * Party panel: a spatial walk over the staircase rects the draw pass
+     * already produced, so the lead slot's odd geometry needs no special
+     * case and the nav cannot drift out of sync with the layout. Slots the
+     * panel would refuse anyway are skipped rather than focused.
+     */
+    private void navBattleParty(int action) {
+        int count = Math.min(battlePartyCards.length, state.party.size());
+        if (count == 0) {
+            return;
+        }
+        if (battlePartyFocus < 0 || battlePartyFocus >= count) {
+            battlePartyFocus = firstEnabledPartySlot(count);
+            return;
+        }
+        RectF from = battlePartyCards[battlePartyFocus];
+        int best = -1;
+        float bestScore = Float.MAX_VALUE;
+        for (int i = 0; i < count; i++) {
+            if (i == battlePartyFocus || !battlePartySlotEnabled(i)) {
+                continue;
+            }
+            RectF to = battlePartyCards[i];
+            float dx = to.centerX() - from.centerX();
+            float dy = to.centerY() - from.centerY();
+            boolean ahead = action == NAV_UP ? dy < -1 : action == NAV_DOWN ? dy > 1
+                    : action == NAV_LEFT ? dx < -1 : dx > 1;
+            if (!ahead) {
+                continue;
+            }
+            boolean vertical = action == NAV_UP || action == NAV_DOWN;
+            // Distance along the direction asked for, with drift across it
+            // weighted heavier so a near-straight neighbour always wins.
+            float score = Math.abs(vertical ? dy : dx)
+                    + Math.abs(vertical ? dx : dy) * 2f;
+            if (score < bestScore) {
+                bestScore = score;
+                best = i;
+            }
+        }
+        if (best >= 0) {
+            battlePartyFocus = best;
+        }
+    }
+
+    private int firstEnabledPartySlot(int count) {
+        for (int i = 0; i < count; i++) {
+            if (battlePartySlotEnabled(i)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /** Reconciles the local battle bag/party panel with the engine's wait state. */
@@ -212,6 +359,10 @@ public final class DualScreenView extends View {
             // (battleCloseMs is stamped on every submission, so an accepted
             // choice closes the panel as soon as the wait state clears.)
             battlePanel = 0;
+        }
+        if (battlePanel != lastBattlePanel) {
+            lastBattlePanel = battlePanel;
+            battlePartyFocus = -1; // a fresh panel starts on its first legal slot
         }
     }
 
@@ -923,17 +1074,28 @@ public final class DualScreenView extends View {
     }
 
     private void drawCursorRing(Canvas canvas, RectF cell, float radius) {
+        drawCursorRing(canvas, cell, radius, true);
+    }
+
+    /**
+     * outside=false draws the ring just inside the cell instead, for the
+     * party staircase: those slots sit flush against each other the way the
+     * game's own party menu does, so a ring drawn outside would run over the
+     * neighbouring slot.
+     */
+    private void drawCursorRing(Canvas canvas, RectF cell, float radius, boolean outside) {
         float grow = Math.max(4f, Math.min(10f,
                 Math.min(cell.width(), cell.height()) * 0.022f));
         RectF ring = new RectF(cell);
-        ring.inset(-grow, -grow);
+        ring.inset(outside ? -grow : grow, outside ? -grow : grow);
+        float r = outside ? radius + grow : Math.max(0, radius - grow);
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(grow * 1.6f);
         paint.setColor(0xFF3A2E14); // dark backing, so the gold reads on any fill
-        canvas.drawRoundRect(ring, radius + grow, radius + grow, paint);
+        canvas.drawRoundRect(ring, r, r, paint);
         paint.setStrokeWidth(grow * 0.9f);
         paint.setColor(0xFFF8B850);
-        canvas.drawRoundRect(ring, radius + grow, radius + grow, paint);
+        canvas.drawRoundRect(ring, r, r, paint);
         paint.setStyle(Paint.Style.FILL);
     }
 
@@ -1967,6 +2129,12 @@ public final class DualScreenView extends View {
         float oy = (contentHeight - 160f * s) / 2f;
         float nameScale = s * 0.8f;
         float subScale = s * 0.65f;
+        if (battlePartyFocus < 0) {
+            // Park the button cursor on the first slot this panel would
+            // actually accept, so it is visible before any key is pressed.
+            battlePartyFocus = firstEnabledPartySlot(
+                    Math.min(battlePartyCards.length, state.party.size()));
+        }
 
         for (int i = 0; i < 6; i++) {
             boolean present = i < state.party.size();
@@ -2036,6 +2204,9 @@ public final class DualScreenView extends View {
             if (!enabled) {
                 paint.setColor(0x50000000);
                 canvas.drawRoundRect(slot, 4, 4, paint);
+            }
+            if (i == battlePartyFocus && enabled) {
+                drawCursorRing(canvas, slot, 4, false);
             }
         }
 
