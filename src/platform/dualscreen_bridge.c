@@ -1130,6 +1130,7 @@ void DualScreen_FrameHook(void)
                        | (menu << 16)
                        | (gActionSelectionCursor[battler] << 8)
                        | gMoveSelectionCursor[battler];
+            }
         }
         SDL_AtomicSet(&sBattleCursor, packed);
     }

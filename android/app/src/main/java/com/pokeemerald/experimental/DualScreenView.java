@@ -772,10 +772,12 @@ public final class DualScreenView extends View {
     private static final int[][] CMD_STEPS = {
         // up, down, left, right
         {-1,  1, -1, -1}, // FIGHT
-        { 0, -1, -1,  2}, // BAG
-        { 0, -1,  1,  3}, // POKéMON
-        { 0, -1,  2, -1}, // RUN
+        { 0, -1, -1,  3}, // BAG, row left
+        { 0, -1,  3, -1}, // POKéMON, row right
+        { 0, -1,  1,  2}, // RUN, row centre
     };
+    // Bottom row left to right, as the DS games order it: BAG, RUN, POKéMON.
+    private static final int[] CMD_ROW = {1, 3, 2};
     private static final int[] DIR_KEYS = {KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT};
 
     /** Shortest run of directions from one command button to another. */
@@ -1158,8 +1160,6 @@ public final class DualScreenView extends View {
     private int liveMenu() {
         long now = System.currentTimeMillis();
         int packed = DualScreenBridge.nativeGetBattleCursor();
-        int menu = packed >= 0 ? (packed >> 16) & 0xFF : state.battleMenu;
-        if (menu != 0) {
         if (packed >= 0) {
             // The DS games show the cursor once you touch the d-pad and drop
             // it the moment a finger takes over, rather than carrying both
@@ -1170,6 +1170,8 @@ public final class DualScreenView extends View {
             }
             lastPressCount = presses;
         }
+        int menu = packed >= 0 ? (packed >> 16) & 0xFF : state.battleMenu;
+        if (menu != 0) {
             lastLiveMenu = menu;
             lastLiveMenuMs = now;
             return menu;
@@ -1196,11 +1198,11 @@ public final class DualScreenView extends View {
      * neighbouring slot.
      */
     private void drawCursorRing(Canvas canvas, RectF cell, float radius, boolean outside) {
-        float grow = Math.max(4f, Math.min(10f,
-                Math.min(cell.width(), cell.height()) * 0.022f));
         if (!showCursor) {
             return;
         }
+        float grow = Math.max(4f, Math.min(10f,
+                Math.min(cell.width(), cell.height()) * 0.022f));
         RectF ring = new RectF(cell);
         ring.inset(outside ? -grow : grow, outside ? -grow : grow);
         float r = outside ? radius + grow : Math.max(0, radius - grow);
@@ -1796,7 +1798,6 @@ public final class DualScreenView extends View {
         }
 
         DualScreenState.Mon self = state.battlePlayerMon;
-        float gridTop = pad;
 
         if (menu == 0) {
             drawBattleIdle(canvas, pad, scale);
@@ -1806,6 +1807,7 @@ public final class DualScreenView extends View {
         if (menu == 1) {
             drawBattleCommands(canvas, pad, scale);
         } else {
+            float gridTop = drawBattleMenuHeader(canvas, pad, scale);
             // Move grid: name, type icon, PP, PWR/ACC, effectiveness hint.
             boolean active = menu == 2;
             int cursor = liveCursor(2, state.moveCursor);
@@ -1951,11 +1953,8 @@ public final class DualScreenView extends View {
 
     private void drawBattleCommands(Canvas canvas, float pad, float scale) {
         float contentHeight = getHeight();
-        float gridTop = pad;
+        float gridTop = drawBattleMenuHeader(canvas, pad, scale);
         boolean runDisabled = state.battleKind == 1; // no running from trainers
-        // The engine indexes the command cursor over its own 2x2 box
-        // (FIGHT/BAG over POKeMON/RUN), which is the order these buttons are
-        // in even though the DP layout arranges them differently.
         int cursor = liveCursor(1, state.actionCursor);
 
         float fightH = (contentHeight - gridTop - pad * 2) * 0.56f;
@@ -1968,16 +1967,63 @@ public final class DualScreenView extends View {
 
         float smallTop = fight.bottom + pad;
         float smallW = (getWidth() - pad * 4) / 3f;
-        for (int i = 1; i < 4; i++) {
-            float left = pad + (i - 1) * (smallW + pad);
+        for (int pos = 0; pos < CMD_ROW.length; pos++) {
+            int cmd = CMD_ROW[pos];
+            float left = pad + pos * (smallW + pad);
             RectF cell = new RectF(left, smallTop, left + smallW, contentHeight - pad);
-            battleButtons[i].set(cell);
-            drawCommandButton(canvas, cell, i, battlePressedCmd == i,
-                    !(i == 3 && runDisabled), scale * 1.1f);
-            if (cursor == i) {
+            battleButtons[cmd].set(cell);
+            drawCommandButton(canvas, cell, cmd, battlePressedCmd == cmd,
+                    !(cmd == 3 && runDisabled), scale * 1.1f);
+            if (cursor == cmd) {
                 drawCursorRing(canvas, cell, 16);
             }
         }
+    }
+
+    /**
+     * Status band above the battle menus. The DS games keep the top eighth of
+     * the touch screen clear of buttons and put the active mon's readout
+     * there (HGSS carries selectedMon/hp/maxHp on its main-menu struct for
+     * exactly this). Ours shows both sides, because opening a menu otherwise
+     * hides the idle cards and takes the HP readout away with them. Returns
+     * the y the buttons start at.
+     */
+    private float drawBattleMenuHeader(Canvas canvas, float pad, float scale) {
+        GbaFont f = font();
+        float band = getHeight() * 0.125f;
+        float top = pad * 0.4f;
+        float h = band - top - pad * 0.5f;
+        if (f == null || h <= 0) {
+            return band;
+        }
+        DualScreenState.Mon[] sides = {state.battlePlayerMon, state.battleEnemyMon};
+        float half = (getWidth() - pad * 3) / 2f;
+        for (int i = 0; i < 2; i++) {
+            DualScreenState.Mon mon = sides[i];
+            if (mon == null) {
+                continue;
+            }
+            float left = pad + i * (half + pad);
+            float textScale = scale * 0.85f;
+            Bitmap icon = monIcon(mon.species);
+            float iconSize = h;
+            if (icon != null) {
+                canvas.drawBitmap(icon, null,
+                        new RectF(left, top, left + iconSize, top + iconSize), pixelPaint);
+            }
+            float textLeft = left + iconSize + pad * 0.3f;
+            f.draw(canvas, mon.nick + "  Lv" + mon.level, textLeft, top,
+                    textScale, TEXT_WHITE, 0xFF303840);
+            float barTop = top + GbaFont.LINE_HEIGHT * textScale + 4;
+            float barW = left + half - textLeft;
+            drawHpBar(canvas, textLeft, barTop, barW, h * 0.22f, mon.hp, mon.maxHp);
+            if (i == 0) {
+                String hp = mon.hp + "/" + mon.maxHp;
+                f.draw(canvas, hp, left + half - f.measure(hp, textScale * 0.9f),
+                        barTop + h * 0.22f + 2, textScale * 0.9f, TEXT_WHITE, 0xFF303840);
+            }
+        }
+        return band;
     }
 
     /** One beveled command button with its glyph, label, and pressed state. */

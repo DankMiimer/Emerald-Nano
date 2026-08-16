@@ -234,21 +234,24 @@ static void CompleteOnBankSpritePosX_0(void)
 }
 
 #ifdef PLATFORM_SDL2
-// The bottom screen lays the commands out the way DP does - FIGHT across the
-// top, BAG / POKeMON / RUN in a row beneath it - and not in the engine's 2x2
-// box (FIGHT/BAG over POKeMON/RUN). The cursor is still the engine's, so with
-// the vanilla walk the d-pad moved by a layout nobody could see: down off
-// FIGHT reached POKeMON, and BAG was only reachable from RUN by pressing up.
-// Step it by what is actually on screen instead. -1 means the direction
+// The bottom screen lays the commands out the way the DS games do - FIGHT
+// across the top, BAG / RUN / POKeMON in a row beneath it - and not in the
+// engine's 2x2 box (FIGHT/BAG over POKeMON/RUN). The cursor is still the
+// engine's, so with the vanilla walk the d-pad moved by a layout nobody could
+// see. Step it by what is actually on screen instead. -1 means the direction
 // leaves the layout and the cursor stays put.
+//
+// The row order and this graph both come from HGSS, whose battle menu is the
+// same shape: sCursorArrayMainMenu there is {{FIGHT,FIGHT,FIGHT},
+// {BAG,RUN,POKEMON}} - FIGHT spanning the top of a 2x3 grid.
 static s8 DualScreen_ActionCursorStep(u8 cursor, u8 dir)
 {
     //                          up  down  left  right
     static const s8 steps[4][4] = {
         { -1,  1, -1, -1 }, // 0 FIGHT, alone on the top row
-        {  0, -1, -1,  2 }, // 1 BAG
-        {  0, -1,  1,  3 }, // 2 POKeMON
-        {  0, -1,  2, -1 }, // 3 RUN
+        {  0, -1, -1,  3 }, // 1 BAG, row left
+        {  0, -1,  3, -1 }, // 2 POKeMON, row right
+        {  0, -1,  1,  2 }, // 3 RUN, row centre
     };
 
     if (cursor >= 4 || dir >= 4)
