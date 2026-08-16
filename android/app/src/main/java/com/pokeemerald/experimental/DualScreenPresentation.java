@@ -41,11 +41,6 @@ public final class DualScreenPresentation extends Presentation {
         }
     }
 
-    /** Whether the bottom screen currently wants the physical buttons. */
-    public boolean isCapturingKeys() {
-        return view != null && view.isCapturingKeys();
-    }
-
     /** Routes one button press from the game activity to the bottom screen. */
     public void navigate(int action) {
         if (view != null) {

@@ -20,6 +20,15 @@ public final class DualScreenBridge {
     public static native int nativeGetBattleCursor();
 
     /**
+     * One queued button press for an open battle takeover panel, or -1 when
+     * the queue is empty. Drain in a loop. Values match DualScreenView's
+     * NAV_* constants. These are sampled from the game's own input on the
+     * frame thread, which is the path that carries the device's controller
+     * however it reports its buttons.
+     */
+    public static native int nativeDrainNavKey();
+
+    /**
      * Renders a 32x32 party icon frame (0 or 1) for a species into
      * ARGB_8888 pixels (row-major, length 32*32), decoded from the game's
      * own icon data. Returns null for invalid species.

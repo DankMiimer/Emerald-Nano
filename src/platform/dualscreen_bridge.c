@@ -64,6 +64,26 @@ static SDL_SpinLock sVirtualKeyLock;
 static int sVirtualKeyHead;
 static int sVirtualKeyCount;
 
+// Button presses handed to the bottom screen while a takeover panel is open.
+// Sampled from the game's own input rather than intercepted as Android key
+// events: the engine is parked in a wait handler that reads nothing then, so
+// the buttons are free, and this is the path already proven to carry the
+// device's controller - whatever it reports its buttons as. Actions match
+// DualScreenView's NAV_* constants.
+#define NAV_QUEUE_SIZE 16
+#define NAV_UP 0
+#define NAV_DOWN 1
+#define NAV_LEFT 2
+#define NAV_RIGHT 3
+#define NAV_CONFIRM 4
+#define NAV_CANCEL 5
+
+static u8 sNavQueue[NAV_QUEUE_SIZE];
+static SDL_SpinLock sNavLock;
+static int sNavHead;
+static int sNavCount;
+static u32 sVirtualInputFrame; // last frame a queued virtual key was handed out
+
 // Battle menu cursor, republished every frame rather than once per snapshot.
 // The bottom screen draws the engine's own cursor, and at the snapshot's
 // cadence (8 frames, then a 120ms poll) it would trail a d-pad press by a
@@ -220,9 +240,29 @@ u16 DualScreen_ConsumeVirtualKeys(void)
         keys = sVirtualKeys[sVirtualKeyHead];
         sVirtualKeyHead = (sVirtualKeyHead + 1) % VIRTUAL_KEY_QUEUE_SIZE;
         sVirtualKeyCount--;
+        sVirtualInputFrame = sFrameCounter;
     }
     SDL_AtomicUnlock(&sVirtualKeyLock);
     return keys;
+}
+
+static void PushNav(u8 action)
+{
+    SDL_AtomicLock(&sNavLock);
+    if (sNavCount < NAV_QUEUE_SIZE)
+    {
+        sNavQueue[(sNavHead + sNavCount) % NAV_QUEUE_SIZE] = action;
+        sNavCount++;
+    }
+    SDL_AtomicUnlock(&sNavLock);
+}
+
+static void ClearNavQueue(void)
+{
+    SDL_AtomicLock(&sNavLock);
+    sNavHead = 0;
+    sNavCount = 0;
+    SDL_AtomicUnlock(&sNavLock);
 }
 
 static void QueueVirtualKeys(u16 keys)
@@ -295,6 +335,7 @@ void DualScreen_SetBattleMenuOpen(u32 mode, u32 caseId, u32 battler)
     sBattleMenuBattler = battler;
     sBattleMenuResult = DS_BMENU_RESULT_NONE;
     sBattleChoicePending = FALSE; // a fresh menu never inherits a stale choice
+    ClearNavQueue();              // nor a button press aimed at the last one
     // Bumped on an open as well as on a result, so the bottom screen can tell
     // a brand new wait from the one it just closed and still sees in a stale
     // snapshot. Without that it cannot reopen promptly after a cancel.
@@ -308,6 +349,7 @@ void DualScreen_ClearBattleMenu(void)
     sBattleMenuMode = 0;
     sBattleMenuCaseId = 0;
     sBattleChoicePending = FALSE;
+    ClearNavQueue();
     SDL_AtomicUnlock(&sBattleMenuLock);
 }
 
@@ -1039,6 +1081,32 @@ void DualScreen_FrameHook(void)
      && (DualScreen_PlayerAtMoveSelect() || DualScreen_PlayerAtActionSelect()))
         gBattle_BG0_Y = 0;
 
+    // Button input for an open takeover panel, sampled once a frame. Skipped
+    // while the virtual key queue is draining: those are the keystrokes a
+    // bottom-screen tap injects to walk the engine's cursor, and sampling
+    // them here would replay the tap as a button press inside the very panel
+    // it just opened. Directions use the game's repeat, so a held d-pad
+    // scrolls at the rate its own menus do; confirm and cancel do not repeat.
+    if (sBattleMenuMode != 0 && sVirtualKeyCount == 0
+     && sFrameCounter - sVirtualInputFrame > 4)
+    {
+        u16 repeated = gMain.newAndRepeatedKeys;
+
+        if (repeated & DPAD_UP)
+            PushNav(NAV_UP);
+        else if (repeated & DPAD_DOWN)
+            PushNav(NAV_DOWN);
+        else if (repeated & DPAD_LEFT)
+            PushNav(NAV_LEFT);
+        else if (repeated & DPAD_RIGHT)
+            PushNav(NAV_RIGHT);
+
+        if (gMain.newKeys & A_BUTTON)
+            PushNav(NAV_CONFIRM);
+        else if (gMain.newKeys & B_BUTTON)
+            PushNav(NAV_CANCEL);
+    }
+
     // Republished every frame, ahead of the snapshot throttle: this is what
     // the bottom screen draws its cursor ring from.
     {
@@ -1181,6 +1249,23 @@ JNIEXPORT jint JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_native
         }
     }
     return 0;
+}
+
+// One queued button press for an open takeover panel, or -1 when the queue is
+// empty. Java drains this in a loop; see the NAV_* codes above.
+JNIEXPORT jint JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeDrainNavKey(JNIEnv *env, jclass clazz)
+{
+    jint action = -1;
+
+    SDL_AtomicLock(&sNavLock);
+    if (sNavCount > 0)
+    {
+        action = sNavQueue[sNavHead];
+        sNavHead = (sNavHead + 1) % NAV_QUEUE_SIZE;
+        sNavCount--;
+    }
+    SDL_AtomicUnlock(&sNavLock);
+    return action;
 }
 
 // The battle menu cursor on its own, so the ring can track a d-pad press
