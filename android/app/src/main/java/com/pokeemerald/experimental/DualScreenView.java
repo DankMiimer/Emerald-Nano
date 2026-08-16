@@ -753,15 +753,76 @@ public final class DualScreenView extends View {
         return true;
     }
 
-    /** Walks the in-game 2x2 cursor from `from` to `to`, then confirms. */
-    private void queueGridSelection(int from, int to, boolean confirm) {
+    // How the command cursor steps between buttons, by [button][direction]
+    // with -1 for "no neighbour that way". This mirrors
+    // DualScreen_ActionCursorStep in the engine, which walks the same cursor
+    // by the DP layout drawn here rather than by its own 2x2 box. A tap has
+    // to steer along the same graph or it would aim at the old one.
+    private static final int[][] CMD_STEPS = {
+        // up, down, left, right
+        {-1,  1, -1, -1}, // FIGHT
+        { 0, -1, -1,  2}, // BAG
+        { 0, -1,  1,  3}, // POKéMON
+        { 0, -1,  2, -1}, // RUN
+    };
+    private static final int[] DIR_KEYS = {KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT};
+
+    /** Shortest run of directions from one command button to another. */
+    private static java.util.List<Integer> commandPath(int from, int to) {
+        int[] prev = {-1, -1, -1, -1};
+        int[] via = {-1, -1, -1, -1};
+        boolean[] seen = new boolean[4];
+        java.util.ArrayDeque<Integer> queue = new java.util.ArrayDeque<>();
+        java.util.LinkedList<Integer> dirs = new java.util.LinkedList<>();
+
+        if (from < 0 || from > 3 || to < 0 || to > 3) {
+            return dirs;
+        }
+        seen[from] = true;
+        queue.add(from);
+        while (!queue.isEmpty()) {
+            int cur = queue.poll();
+            if (cur == to) {
+                break;
+            }
+            for (int d = 0; d < 4; d++) {
+                int next = CMD_STEPS[cur][d];
+                if (next < 0 || seen[next]) {
+                    continue;
+                }
+                seen[next] = true;
+                prev[next] = cur;
+                via[next] = d;
+                queue.add(next);
+            }
+        }
+        for (int cur = to; cur != from && prev[cur] >= 0; cur = prev[cur]) {
+            dirs.addFirst(via[cur]);
+        }
+        return dirs;
+    }
+
+    /**
+     * Walks the engine's cursor from `from` to `to`, then confirms. The move
+     * grid is a real 2x2 and the layout matches it, so it steps by axis; the
+     * command screen follows CMD_STEPS instead.
+     */
+    private void queueGridSelection(int menu, int from, int to, boolean confirm) {
         java.util.List<Integer> seq = new java.util.ArrayList<>();
-        int dx = (to & 1) - (from & 1);
-        int dy = ((to >> 1) & 1) - ((from >> 1) & 1);
-        if (dx > 0) { seq.add(KEY_RIGHT); seq.add(0); seq.add(0); }
-        if (dx < 0) { seq.add(KEY_LEFT); seq.add(0); seq.add(0); }
-        if (dy > 0) { seq.add(KEY_DOWN); seq.add(0); seq.add(0); }
-        if (dy < 0) { seq.add(KEY_UP); seq.add(0); seq.add(0); }
+        if (menu == 1) {
+            for (int dir : commandPath(from, to)) {
+                seq.add(DIR_KEYS[dir]);
+                seq.add(0);
+                seq.add(0);
+            }
+        } else {
+            int dx = (to & 1) - (from & 1);
+            int dy = ((to >> 1) & 1) - ((from >> 1) & 1);
+            if (dx > 0) { seq.add(KEY_RIGHT); seq.add(0); seq.add(0); }
+            if (dx < 0) { seq.add(KEY_LEFT); seq.add(0); seq.add(0); }
+            if (dy > 0) { seq.add(KEY_DOWN); seq.add(0); seq.add(0); }
+            if (dy < 0) { seq.add(KEY_UP); seq.add(0); seq.add(0); }
+        }
         if (confirm) { seq.add(KEY_A); seq.add(0); }
         int[] masks = new int[seq.size()];
         for (int i = 0; i < masks.length; i++) masks[i] = seq.get(i);
@@ -810,7 +871,7 @@ public final class DualScreenView extends View {
                     battleArmMs = now;
                     DualScreenBridge.nativeBattleArm(2);
                 }
-                queueGridSelection(cursor, i, true);
+                queueGridSelection(battleButtonsMenu, cursor, i, true);
                 return;
             }
         }

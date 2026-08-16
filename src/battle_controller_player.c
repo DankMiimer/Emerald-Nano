@@ -233,6 +233,30 @@ static void CompleteOnBankSpritePosX_0(void)
         PlayerBufferExecCompleted();
 }
 
+#ifdef PLATFORM_SDL2
+// The bottom screen lays the commands out the way DP does - FIGHT across the
+// top, BAG / POKeMON / RUN in a row beneath it - and not in the engine's 2x2
+// box (FIGHT/BAG over POKeMON/RUN). The cursor is still the engine's, so with
+// the vanilla walk the d-pad moved by a layout nobody could see: down off
+// FIGHT reached POKeMON, and BAG was only reachable from RUN by pressing up.
+// Step it by what is actually on screen instead. -1 means the direction
+// leaves the layout and the cursor stays put.
+static s8 DualScreen_ActionCursorStep(u8 cursor, u8 dir)
+{
+    //                          up  down  left  right
+    static const s8 steps[4][4] = {
+        { -1,  1, -1, -1 }, // 0 FIGHT, alone on the top row
+        {  0, -1, -1,  2 }, // 1 BAG
+        {  0, -1,  1,  3 }, // 2 POKeMON
+        {  0, -1,  2, -1 }, // 3 RUN
+    };
+
+    if (cursor >= 4 || dir >= 4)
+        return -1;
+    return steps[cursor][dir];
+}
+#endif
+
 static void HandleInputChooseAction(void)
 {
     u16 itemId = gBattleBufferA[gActiveBattler][2] | (gBattleBufferA[gActiveBattler][3] << 8);
@@ -266,6 +290,22 @@ static void HandleInputChooseAction(void)
         }
         PlayerBufferExecCompleted();
     }
+#ifdef PLATFORM_SDL2
+    else if (DualScreen_BattleUiActive() && JOY_NEW(DPAD_ANY))
+    {
+        u8 dir = JOY_NEW(DPAD_UP) ? 0 : JOY_NEW(DPAD_DOWN) ? 1
+               : JOY_NEW(DPAD_LEFT) ? 2 : 3;
+        s8 next = DualScreen_ActionCursorStep(gActionSelectionCursor[gActiveBattler], dir);
+
+        if (next >= 0)
+        {
+            PlaySE(SE_SELECT);
+            ActionSelectionDestroyCursorAt(gActionSelectionCursor[gActiveBattler]);
+            gActionSelectionCursor[gActiveBattler] = next;
+            ActionSelectionCreateCursorAt(gActionSelectionCursor[gActiveBattler], 0);
+        }
+    }
+#endif
     else if (JOY_NEW(DPAD_LEFT))
     {
         if (gActionSelectionCursor[gActiveBattler] & 1) // if is B_ACTION_USE_ITEM or B_ACTION_RUN
