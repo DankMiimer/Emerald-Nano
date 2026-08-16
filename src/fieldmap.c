@@ -68,6 +68,31 @@ const struct MapHeader *const GetMapHeaderFromConnection(const struct MapConnect
     return Overworld_GetMapHeaderByGroupAndId(connection->mapGroup, connection->mapNum);
 }
 
+// Every overworld map uses the wide BG. Where the authored map runs out —
+// small interiors, map edges — the wide columns draw the layout's border
+// block, which is exactly what vanilla shows when a room is smaller than the
+// screen (black tiles indoors, trees outdoors). Indoors was briefly forced
+// narrow while widescreen bugs were being chased, but the real culprits were
+// a stale sdl2.o (margin 8 vs 24) and the window mask, both fixed since.
+bool8 UseWideOverworldBg(void)
+{
+#ifdef PLATFORM_SDL2
+    return gMapHeader.mapLayout != NULL;
+#else
+    return FALSE;
+#endif
+}
+
+u32 GetBgMapTilesX(void)
+{
+    return UseWideOverworldBg() ? BG_MAP_TILES_X : 32;
+}
+
+u32 GetMapFillExtraX(void)
+{
+    return UseWideOverworldBg() ? MAP_FILL_EXTRA_X_WIDE : 0;
+}
+
 void InitMap(void)
 {
     InitMapLayoutData(&gMapHeader);
@@ -121,7 +146,7 @@ static void InitBackupMapLayoutData(const u16 *map, u16 width, u16 height)
     u16 *dest;
     int y;
     dest = gBackupMapLayout.map;
-    dest += gBackupMapLayout.width * 7 + MAP_OFFSET;
+    dest += gBackupMapLayout.width * MAP_OFFSET_Y + MAP_OFFSET;
     for (y = 0; y < height; y++)
     {
         CpuCopy16(map, dest, width * 2);
@@ -198,7 +223,7 @@ static void FillSouthConnection(struct MapHeader const *mapHeader, struct MapHea
     {
         cWidth = connectedMapHeader->mapLayout->width;
         x = offset + MAP_OFFSET;
-        y = mapHeader->mapLayout->height + MAP_OFFSET;
+        y = mapHeader->mapLayout->height + MAP_OFFSET_Y;
         if (x < 0)
         {
             x2 = -x;
@@ -222,7 +247,7 @@ static void FillSouthConnection(struct MapHeader const *mapHeader, struct MapHea
             x, y,
             connectedMapHeader,
             x2, /*y2*/ 0,
-            width, /*height*/ MAP_OFFSET);
+            width, /*height*/ MAP_OFFSET_Y);
     }
 }
 
@@ -238,7 +263,7 @@ static void FillNorthConnection(struct MapHeader const *mapHeader, struct MapHea
         cWidth = connectedMapHeader->mapLayout->width;
         cHeight = connectedMapHeader->mapLayout->height;
         x = offset + MAP_OFFSET;
-        y2 = cHeight - MAP_OFFSET;
+        y2 = cHeight - MAP_OFFSET_Y;
         if (x < 0)
         {
             x2 = -x;
@@ -262,7 +287,7 @@ static void FillNorthConnection(struct MapHeader const *mapHeader, struct MapHea
             x, /*y*/ 0,
             connectedMapHeader,
             x2, y2,
-            width, /*height*/ MAP_OFFSET);
+            width, /*height*/ MAP_OFFSET_Y);
 
     }
 }
@@ -277,7 +302,7 @@ static void FillWestConnection(struct MapHeader const *mapHeader, struct MapHead
     {
         cWidth = connectedMapHeader->mapLayout->width;
         cHeight = connectedMapHeader->mapLayout->height;
-        y = offset + MAP_OFFSET;
+        y = offset + MAP_OFFSET_Y;
         x2 = cWidth - MAP_OFFSET;
         if (y < 0)
         {
@@ -315,7 +340,7 @@ static void FillEastConnection(struct MapHeader const *mapHeader, struct MapHead
     {
         cHeight = connectedMapHeader->mapLayout->height;
         x = mapHeader->mapLayout->width + MAP_OFFSET;
-        y = offset + MAP_OFFSET;
+        y = offset + MAP_OFFSET_Y;
         if (y < 0)
         {
             y2 = -y;
@@ -384,6 +409,108 @@ u8 MapGridGetMetatileLayerTypeAt(int x, int y)
     return UNPACK_LAYER_TYPE(GetMetatileAttributesById(metatile));
 }
 
+// The widescreen view draws up to 9 metatiles past the retail window, but the
+// backup map's connection strips only hold 7 — the last margin columns near a
+// map boundary would fall back to the border block (trees over a city path).
+// For those cells, read the connected neighbor's layout straight from its
+// map data, the same source FillConnection copies from. Draw path only:
+// collision, events and scripts keep the retail 7-tile world.
+static bool32 TryGetConnectionBlock(int x, int y, u16 *block)
+{
+    const struct MapConnections *cons = gMapHeader.connections;
+    const struct MapLayout *cur = gMapHeader.mapLayout;
+    int ax, ay, i;
+
+    if (cons == NULL || cons->connections == NULL || cur == NULL)
+        return FALSE;
+    ax = x - MAP_OFFSET;
+    ay = y - MAP_OFFSET_Y;
+    for (i = 0; i < cons->count; i++)
+    {
+        const struct MapConnection *c = &cons->connections[i];
+        const struct MapHeader *neighborHeader;
+        const struct MapLayout *neighbor;
+        int nx, ny;
+
+        switch (c->direction)
+        {
+        case CONNECTION_WEST:
+            if (ax >= 0)
+                continue;
+            neighborHeader = GetMapHeaderFromConnection(c);
+            neighbor = neighborHeader->mapLayout;
+            if (neighbor == NULL)
+                continue;
+            nx = neighbor->width + ax;
+            ny = ay - c->offset;
+            break;
+        case CONNECTION_EAST:
+            if (ax < cur->width)
+                continue;
+            neighborHeader = GetMapHeaderFromConnection(c);
+            neighbor = neighborHeader->mapLayout;
+            if (neighbor == NULL)
+                continue;
+            nx = ax - cur->width;
+            ny = ay - c->offset;
+            break;
+        case CONNECTION_NORTH:
+            if (ay >= 0)
+                continue;
+            neighborHeader = GetMapHeaderFromConnection(c);
+            neighbor = neighborHeader->mapLayout;
+            if (neighbor == NULL)
+                continue;
+            nx = ax - c->offset;
+            ny = neighbor->height + ay;
+            break;
+        case CONNECTION_SOUTH:
+            if (ay < cur->height)
+                continue;
+            neighborHeader = GetMapHeaderFromConnection(c);
+            neighbor = neighborHeader->mapLayout;
+            if (neighbor == NULL)
+                continue;
+            nx = ax - c->offset;
+            ny = ay - cur->height;
+            break;
+        default:
+            continue;
+        }
+        if (nx < 0 || nx >= neighbor->width || ny < 0 || ny >= neighbor->height)
+            continue;
+        *block = neighbor->map[nx + neighbor->width * ny];
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static u16 GetMapGridBlockForDraw(int x, int y)
+{
+    u16 block;
+
+    if (AreCoordsWithinMapGridBounds(x, y))
+    {
+        block = gBackupMapLayout.map[x + gBackupMapLayout.width * y];
+        if (block != MAPGRID_UNDEFINED)
+            return block;
+    }
+    if (TryGetConnectionBlock(x, y, &block))
+        return block;
+    return GetBorderBlockAt(x, y);
+}
+
+u32 MapGridGetMetatileIdForDraw(int x, int y)
+{
+    return UNPACK_METATILE(GetMapGridBlockForDraw(x, y));
+}
+
+u8 MapGridGetMetatileLayerTypeForDraw(int x, int y)
+{
+    u16 metatile = MapGridGetMetatileIdForDraw(x, y);
+    return UNPACK_LAYER_TYPE(GetMetatileAttributesById(metatile));
+}
+
 void MapGridSetMetatileIdAt(int x, int y, u16 metatile)
 {
     int i;
@@ -433,11 +560,14 @@ void SaveMapView(void)
     int width;
     mapView = gSaveBlock1Ptr->mapView;
     width = gBackupMapLayout.width;
-    x = gSaveBlock1Ptr->pos.x;
+    // SaveBlock1::mapView is a fixed 0x100-entry retail-save field. Always
+    // serialize the original 15x14 camera window (210 entries) so existing
+    // saves stay binary compatible even if the live tilemap is wider.
+    x = gSaveBlock1Ptr->pos.x + (MAP_OFFSET - MAP_OFFSET_Y);
     y = gSaveBlock1Ptr->pos.y;
     for (i = y; i < y + MAP_OFFSET_H; i++)
     {
-        for (j = x; j < x + MAP_OFFSET_W; j++)
+        for (j = x; j < x + (MAP_OFFSET_Y * 2 + 1); j++)
             *mapView++ = sBackupMapData[width * i + j];
     }
 }
@@ -480,7 +610,7 @@ static void LoadSavedMapView(void)
     if (!SavedMapViewIsEmpty())
     {
         width = gBackupMapLayout.width;
-        x = gSaveBlock1Ptr->pos.x;
+        x = gSaveBlock1Ptr->pos.x + (MAP_OFFSET - MAP_OFFSET_Y);
         y = gSaveBlock1Ptr->pos.y;
         for (i = y; i < y + MAP_OFFSET_H; i++)
         {
@@ -491,14 +621,14 @@ static void LoadSavedMapView(void)
             else
                 yMode = 0xFF;
 
-            for (j = x; j < x + MAP_OFFSET_W; j++)
+            for (j = x; j < x + (MAP_OFFSET_Y * 2 + 1); j++)
             {
                 if (!SkipCopyingMetatileFromSavedMap(&sBackupMapData[j + width * i], width, yMode))
                     sBackupMapData[j + width * i] = *mapView;
                 mapView++;
             }
         }
-        for (j = x; j < x + MAP_OFFSET_W; j++)
+        for (j = x; j < x + (MAP_OFFSET_Y * 2 + 1); j++)
         {
             if (y != 0)
                 FixLongGrassMetatilesWindowTop(j, y - 1);
@@ -524,9 +654,9 @@ static void MoveMapViewToBackup(u8 direction)
     width = gBackupMapLayout.width;
     r9 = 0;
     r8 = 0;
-    x0 = gSaveBlock1Ptr->pos.x;
+    x0 = gSaveBlock1Ptr->pos.x + (MAP_OFFSET - MAP_OFFSET_Y);
     y0 = gSaveBlock1Ptr->pos.y;
-    x2 = MAP_OFFSET_W;
+    x2 = MAP_OFFSET_Y * 2 + 1;
     y2 = MAP_OFFSET_H;
     switch (direction)
     {
@@ -540,11 +670,11 @@ static void MoveMapViewToBackup(u8 direction)
         break;
     case CONNECTION_WEST:
         x0 += 1;
-        x2 = MAP_OFFSET_W - 1;
+        x2 = MAP_OFFSET_Y * 2;
         break;
     case CONNECTION_EAST:
         r9 = 1;
-        x2 = MAP_OFFSET_W - 1;
+        x2 = MAP_OFFSET_Y * 2;
         break;
     }
     for (y = 0; y < y2; y++)
@@ -554,7 +684,7 @@ static void MoveMapViewToBackup(u8 direction)
         for (x = 0; x < x2; x++)
         {
             desti = width * (y + y0);
-            srci = (y + r8) * MAP_OFFSET_W + r9;
+            srci = (y + r8) * (MAP_OFFSET_Y * 2 + 1) + r9;
             src = &mapView[srci + i];
             dest = &sBackupMapData[x0 + desti + j];
             *dest = *src;
@@ -584,14 +714,14 @@ int GetMapBorderIdAt(int x, int y)
 
         return CONNECTION_WEST;
     }
-    else if (y >= (gBackupMapLayout.height - MAP_OFFSET))
+    else if (y >= (gBackupMapLayout.height - MAP_OFFSET_Y))
     {
         if (!sMapConnectionFlags.south)
             return CONNECTION_INVALID;
 
         return CONNECTION_SOUTH;
     }
-    else if (y < MAP_OFFSET)
+    else if (y < MAP_OFFSET_Y)
     {
         if (!sMapConnectionFlags.north)
             return CONNECTION_INVALID;
@@ -606,14 +736,14 @@ int GetMapBorderIdAt(int x, int y)
 
 int GetPostCameraMoveMapBorderId(int x, int y)
 {
-    return GetMapBorderIdAt(gSaveBlock1Ptr->pos.x + MAP_OFFSET + x, gSaveBlock1Ptr->pos.y + MAP_OFFSET + y);
+    return GetMapBorderIdAt(gSaveBlock1Ptr->pos.x + MAP_OFFSET + x, gSaveBlock1Ptr->pos.y + MAP_OFFSET_Y + y);
 }
 
 bool32 CanCameraMoveInDirection(int direction)
 {
     int x, y;
     x = gSaveBlock1Ptr->pos.x + MAP_OFFSET + gDirectionToVectors[direction].x;
-    y = gSaveBlock1Ptr->pos.y + MAP_OFFSET + gDirectionToVectors[direction].y;
+    y = gSaveBlock1Ptr->pos.y + MAP_OFFSET_Y + gDirectionToVectors[direction].y;
 
     if (GetMapBorderIdAt(x, y) == CONNECTION_INVALID)
         return FALSE;
@@ -773,14 +903,14 @@ const struct MapConnection *GetMapConnectionAtPos(s16 x, s16 y)
         {
             direction = connection->direction;
             if ((direction == CONNECTION_DIVE || direction == CONNECTION_EMERGE)
-             || (direction == CONNECTION_NORTH && y > MAP_OFFSET - 1)
-             || (direction == CONNECTION_SOUTH && y < gMapHeader.mapLayout->height + MAP_OFFSET)
+             || (direction == CONNECTION_NORTH && y > MAP_OFFSET_Y - 1)
+             || (direction == CONNECTION_SOUTH && y < gMapHeader.mapLayout->height + MAP_OFFSET_Y)
              || (direction == CONNECTION_WEST && x > MAP_OFFSET - 1)
              || (direction == CONNECTION_EAST && x < gMapHeader.mapLayout->width + MAP_OFFSET))
             {
                 continue;
             }
-            if (IsPosInConnectingMap(connection, x - MAP_OFFSET, y - MAP_OFFSET) == TRUE)
+            if (IsPosInConnectingMap(connection, x - MAP_OFFSET, y - MAP_OFFSET_Y) == TRUE)
             {
                 return connection;
             }
@@ -792,13 +922,13 @@ const struct MapConnection *GetMapConnectionAtPos(s16 x, s16 y)
 void SetCameraFocusCoords(u16 x, u16 y)
 {
     gSaveBlock1Ptr->pos.x = x - MAP_OFFSET;
-    gSaveBlock1Ptr->pos.y = y - MAP_OFFSET;
+    gSaveBlock1Ptr->pos.y = y - MAP_OFFSET_Y;
 }
 
 void GetCameraFocusCoords(u16 *x, u16 *y)
 {
     *x = gSaveBlock1Ptr->pos.x + MAP_OFFSET;
-    *y = gSaveBlock1Ptr->pos.y + MAP_OFFSET;
+    *y = gSaveBlock1Ptr->pos.y + MAP_OFFSET_Y;
 }
 
 static void UNUSED SetCameraCoords(u16 x, u16 y)

@@ -245,9 +245,9 @@ static void Task_HandleTruckSequence(u8 taskId)
         tTimer++;
         if (tTimer == 120)
         {
-            MapGridSetMetatileIdAt(4 + MAP_OFFSET, 1 + MAP_OFFSET, METATILE_InsideOfTruck_ExitLight_Top);
-            MapGridSetMetatileIdAt(4 + MAP_OFFSET, 2 + MAP_OFFSET, METATILE_InsideOfTruck_ExitLight_Mid);
-            MapGridSetMetatileIdAt(4 + MAP_OFFSET, 3 + MAP_OFFSET, METATILE_InsideOfTruck_ExitLight_Bottom);
+            MapGridSetMetatileIdAt(4 + MAP_OFFSET, 1 + MAP_OFFSET_Y, METATILE_InsideOfTruck_ExitLight_Top);
+            MapGridSetMetatileIdAt(4 + MAP_OFFSET, 2 + MAP_OFFSET_Y, METATILE_InsideOfTruck_ExitLight_Mid);
+            MapGridSetMetatileIdAt(4 + MAP_OFFSET, 3 + MAP_OFFSET_Y, METATILE_InsideOfTruck_ExitLight_Bottom);
             DrawWholeMapView();
             PlaySE(SE_TRUCK_DOOR);
             DestroyTask(taskId);
@@ -259,9 +259,9 @@ static void Task_HandleTruckSequence(u8 taskId)
 
 void ExecuteTruckSequence(void)
 {
-    MapGridSetMetatileIdAt(4 + MAP_OFFSET, 1 + MAP_OFFSET, METATILE_InsideOfTruck_DoorClosedFloor_Top);
-    MapGridSetMetatileIdAt(4 + MAP_OFFSET, 2 + MAP_OFFSET, METATILE_InsideOfTruck_DoorClosedFloor_Mid);
-    MapGridSetMetatileIdAt(4 + MAP_OFFSET, 3 + MAP_OFFSET, METATILE_InsideOfTruck_DoorClosedFloor_Bottom);
+    MapGridSetMetatileIdAt(4 + MAP_OFFSET, 1 + MAP_OFFSET_Y, METATILE_InsideOfTruck_DoorClosedFloor_Top);
+    MapGridSetMetatileIdAt(4 + MAP_OFFSET, 2 + MAP_OFFSET_Y, METATILE_InsideOfTruck_DoorClosedFloor_Mid);
+    MapGridSetMetatileIdAt(4 + MAP_OFFSET, 3 + MAP_OFFSET_Y, METATILE_InsideOfTruck_DoorClosedFloor_Bottom);
     DrawWholeMapView();
     LockPlayerFieldControls();
     CpuFastFill(0, gPlttBufferFaded, PLTT_SIZE);

@@ -28,10 +28,10 @@ extern const struct SpriteTemplate *const gFieldEffectObjectTemplatePointers[];
 
 static const s16 sFarawayIslandRockCoords[4][2] =
 {
-    {14 + MAP_OFFSET,  9 + MAP_OFFSET},
-    {18 + MAP_OFFSET,  9 + MAP_OFFSET},
-    { 9 + MAP_OFFSET, 10 + MAP_OFFSET},
-    {13 + MAP_OFFSET, 13 + MAP_OFFSET},
+    {14 + MAP_OFFSET,  9 + MAP_OFFSET_Y},
+    {18 + MAP_OFFSET,  9 + MAP_OFFSET_Y},
+    { 9 + MAP_OFFSET, 10 + MAP_OFFSET_Y},
+    {13 + MAP_OFFSET, 13 + MAP_OFFSET_Y},
 };
 
 static u8 GetMewObjectEventId(void)

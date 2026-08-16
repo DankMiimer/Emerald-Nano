@@ -278,7 +278,10 @@ static const struct BgTemplate sOverworldBgTemplates[] =
     {
         .bg = 1,
         .charBaseIndex = 0,
-        .mapBaseIndex = 29,
+        // Field UI graphics on BG0 occupy char-base 2 through tile 0x23C,
+        // ending just below screenblock 25. Keep the six wide-map blocks in
+        // 25-30 so dialogue/window tiles cannot overwrite BG1's tilemap.
+        .mapBaseIndex = 25,
         .screenSize = 0,
         .paletteMode = 0,
         .priority = 1,
@@ -287,7 +290,7 @@ static const struct BgTemplate sOverworldBgTemplates[] =
     {
         .bg = 2,
         .charBaseIndex = 0,
-        .mapBaseIndex = 28,
+        .mapBaseIndex = 27,
         .screenSize = 0,
         .paletteMode = 0,
         .priority = 2,
@@ -296,7 +299,7 @@ static const struct BgTemplate sOverworldBgTemplates[] =
     {
         .bg = 3,
         .charBaseIndex = 0,
-        .mapBaseIndex = 30,
+        .mapBaseIndex = 29,
         .screenSize = 0,
         .paletteMode = 0,
         .priority = 3,
@@ -686,7 +689,7 @@ void UpdateEscapeWarp(s16 x, s16 y)
     u8 currMapType = GetCurrentMapType();
     u8 destMapType = GetMapTypeByGroupAndId(sWarpDestination.mapGroup, sWarpDestination.mapNum);
     if (IsMapTypeOutdoors(currMapType) && IsMapTypeOutdoors(destMapType) != TRUE)
-        SetEscapeWarp(gSaveBlock1Ptr->location.mapGroup, gSaveBlock1Ptr->location.mapNum, WARP_ID_NONE, x - MAP_OFFSET, y - MAP_OFFSET + 1);
+        SetEscapeWarp(gSaveBlock1Ptr->location.mapGroup, gSaveBlock1Ptr->location.mapNum, WARP_ID_NONE, x - MAP_OFFSET, y - MAP_OFFSET_Y + 1);
 }
 
 void SetEscapeWarp(s8 mapGroup, s8 mapNum, s8 warpId, s8 x, s8 y)
@@ -963,7 +966,7 @@ static u8 GetAdjustedInitialDirection(struct InitialPlayerAvatarState *playerStr
 
 static u16 GetCenterScreenMetatileBehavior(void)
 {
-    return MapGridGetMetatileBehaviorAt(gSaveBlock1Ptr->pos.x + MAP_OFFSET, gSaveBlock1Ptr->pos.y + MAP_OFFSET);
+    return MapGridGetMetatileBehaviorAt(gSaveBlock1Ptr->pos.x + MAP_OFFSET, gSaveBlock1Ptr->pos.y + MAP_OFFSET_Y);
 }
 
 bool32 Overworld_IsBikingAllowed(void)
@@ -1410,13 +1413,23 @@ u8 GetCurrentMapBattleScene(void)
 
 static void InitOverworldBgs(void)
 {
+    // Indoor maps stay 32-wide (screenSize 0). Do not shrink gRenderWidth to
+    // match: collapsing 288→240 turns on integer scale on the Thor and pins
+    // the game to a strip at the top of the 16:9 surface, hiding the player
+    // on the south door mat. The PPU already skips margin columns on a 256px
+    // BG, so indoor rooms get black sides inside a stable 16:9 frame.
+    u8 screenSize = UseWideOverworldBg() ? 1 : 0;
+
     InitBgsFromTemplates(0, sOverworldBgTemplates, ARRAY_COUNT(sOverworldBgTemplates));
     SetBgAttribute(1, BG_ATTR_MOSAIC, 1);
     SetBgAttribute(2, BG_ATTR_MOSAIC, 1);
     SetBgAttribute(3, BG_ATTR_MOSAIC, 1);
-    gOverworldTilemapBuffer_Bg1 = AllocZeroed(BG_SCREEN_SIZE);
-    gOverworldTilemapBuffer_Bg2 = AllocZeroed(BG_SCREEN_SIZE);
-    gOverworldTilemapBuffer_Bg3 = AllocZeroed(BG_SCREEN_SIZE);
+    SetBgAttribute(1, BG_ATTR_SCREENSIZE, screenSize);
+    SetBgAttribute(2, BG_ATTR_SCREENSIZE, screenSize);
+    SetBgAttribute(3, BG_ATTR_SCREENSIZE, screenSize);
+    gOverworldTilemapBuffer_Bg1 = AllocZeroed(BG_SCREEN_SIZE * OVERWORLD_BG_TILEMAP_SCREENBLOCKS);
+    gOverworldTilemapBuffer_Bg2 = AllocZeroed(BG_SCREEN_SIZE * OVERWORLD_BG_TILEMAP_SCREENBLOCKS);
+    gOverworldTilemapBuffer_Bg3 = AllocZeroed(BG_SCREEN_SIZE * OVERWORLD_BG_TILEMAP_SCREENBLOCKS);
     SetBgTilemapBuffer(1, gOverworldTilemapBuffer_Bg1);
     SetBgTilemapBuffer(2, gOverworldTilemapBuffer_Bg2);
     SetBgTilemapBuffer(3, gOverworldTilemapBuffer_Bg3);

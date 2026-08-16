@@ -791,9 +791,9 @@ bool8 ScrCmd_warphole(struct ScriptContext *ctx)
 
     PlayerGetDestCoords(&x, &y);
     if (mapGroup == MAP_GROUP(MAP_UNDEFINED) && mapNum == MAP_NUM(MAP_UNDEFINED))
-        SetWarpDestinationToFixedHoleWarp(x - MAP_OFFSET, y - MAP_OFFSET);
+        SetWarpDestinationToFixedHoleWarp(x - MAP_OFFSET, y - MAP_OFFSET_Y);
     else
-        SetWarpDestination(mapGroup, mapNum, WARP_ID_NONE, x - MAP_OFFSET, y - MAP_OFFSET);
+        SetWarpDestination(mapGroup, mapNum, WARP_ID_NONE, x - MAP_OFFSET, y - MAP_OFFSET_Y);
     DoFallWarp();
     ResetInitialPlayerAvatarState();
     return TRUE;
@@ -2043,7 +2043,7 @@ bool8 ScrCmd_setmetatile(struct ScriptContext *ctx)
     bool16 isImpassable = VarGet(ScriptReadHalfword(ctx));
 
     x += MAP_OFFSET;
-    y += MAP_OFFSET;
+    y += MAP_OFFSET_Y;
     if (!isImpassable)
         MapGridSetMetatileIdAt(x, y, metatileId);
     else
@@ -2057,7 +2057,7 @@ bool8 ScrCmd_opendoor(struct ScriptContext *ctx)
     u16 y = VarGet(ScriptReadHalfword(ctx));
 
     x += MAP_OFFSET;
-    y += MAP_OFFSET;
+    y += MAP_OFFSET_Y;
     PlaySE(GetDoorSoundEffect(x, y));
     FieldAnimateDoorOpen(x, y);
     return FALSE;
@@ -2069,7 +2069,7 @@ bool8 ScrCmd_closedoor(struct ScriptContext *ctx)
     u16 y = VarGet(ScriptReadHalfword(ctx));
 
     x += MAP_OFFSET;
-    y += MAP_OFFSET;
+    y += MAP_OFFSET_Y;
     FieldAnimateDoorClose(x, y);
     return FALSE;
 }
@@ -2094,7 +2094,7 @@ bool8 ScrCmd_setdooropen(struct ScriptContext *ctx)
     u16 y = VarGet(ScriptReadHalfword(ctx));
 
     x += MAP_OFFSET;
-    y += MAP_OFFSET;
+    y += MAP_OFFSET_Y;
     FieldSetDoorOpened(x, y);
     return FALSE;
 }
@@ -2105,7 +2105,7 @@ bool8 ScrCmd_setdoorclosed(struct ScriptContext *ctx)
     u16 y = VarGet(ScriptReadHalfword(ctx));
 
     x += MAP_OFFSET;
-    y += MAP_OFFSET;
+    y += MAP_OFFSET_Y;
     FieldSetDoorClosed(x, y);
     return FALSE;
 }

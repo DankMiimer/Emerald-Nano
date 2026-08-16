@@ -98,7 +98,7 @@ static u16 GetFeebasFishingSpotId(s16 targetX, s16 targetY, u8 section)
     {
         for (x = 0; x < gMapHeader.mapLayout->width; x++)
         {
-            u8 behavior = MapGridGetMetatileBehaviorAt(x + MAP_OFFSET, y + MAP_OFFSET);
+            u8 behavior = MapGridGetMetatileBehaviorAt(x + MAP_OFFSET, y + MAP_OFFSET_Y);
             if (MetatileBehavior_IsSurfableAndNotWaterfall(behavior) == TRUE)
             {
                 spotId++;
@@ -123,7 +123,7 @@ static bool8 CheckFeebas(void)
     {
         GetXYCoordsOneStepInFrontOfPlayer(&x, &y);
         x -= MAP_OFFSET;
-        y -= MAP_OFFSET;
+        y -= MAP_OFFSET_Y;
 
         // Get which third of the map the player is in
         if (y >= sRoute119WaterTileData[3 * 0 + 0] && y <= sRoute119WaterTileData[3 * 0 + 1])

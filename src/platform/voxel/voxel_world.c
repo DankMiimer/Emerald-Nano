@@ -36,7 +36,7 @@ void VoxelWorld_GetPlayerCoords(int *x, int *y)
 {
     struct ObjectEvent *playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
     *x = playerObj->currentCoords.x - MAP_OFFSET;
-    *y = playerObj->currentCoords.y - MAP_OFFSET;
+    *y = playerObj->currentCoords.y - MAP_OFFSET_Y;
 }
 
 struct VoxelMapInstance gVoxelMapInstances[MAX_VOXEL_MAP_INSTANCES];
@@ -126,7 +126,7 @@ static u16 VoxelWorld_GetRawBlock(int worldX, int worldY, const struct VoxelMapI
     if (inst == &gVoxelMapInstances[0]) {
         // Current map: use dynamic backup layout to see live events/changes
         int bx = localX + MAP_OFFSET;
-        int by = localY + MAP_OFFSET;
+        int by = localY + MAP_OFFSET_Y;
         if (bx >= 0 && bx < gBackupMapLayout.width &&
             by >= 0 && by < gBackupMapLayout.height) {
             return gBackupMapLayout.map[bx + gBackupMapLayout.width * by];

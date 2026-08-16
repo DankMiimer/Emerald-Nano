@@ -12,6 +12,11 @@
 #include "field_effect_helpers.h"
 #include "field_player_avatar.h"
 #include "fieldmap.h"
+#ifdef PLATFORM_SDL2
+#include "platform.h"
+#else
+#define gRenderMargin 0
+#endif
 #include "mauville_old_man.h"
 #include "metatile_behavior.h"
 #include "overworld.h"
@@ -1296,7 +1301,7 @@ static u8 InitObjectEventStateFromTemplate(const struct ObjectEventTemplate *tem
     objectEvent = &gObjectEvents[objectEventId];
     ClearObjectEvent(objectEvent);
     x = template->x + MAP_OFFSET;
-    y = template->y + MAP_OFFSET;
+    y = template->y + MAP_OFFSET_Y;
     objectEvent->active = TRUE;
     objectEvent->triggerGroundEffectsOnMove = TRUE;
     objectEvent->graphicsId = template->graphicsId;
@@ -1512,7 +1517,7 @@ u8 SpawnSpecialObjectEventParameterized(u8 graphicsId, u8 movementBehavior, u8 l
     struct ObjectEventTemplate objectEventTemplate;
 
     x -= MAP_OFFSET;
-    y -= MAP_OFFSET;
+    y -= MAP_OFFSET_Y;
     objectEventTemplate.localId = localId;
     objectEventTemplate.graphicsId = graphicsId;
     objectEventTemplate.kind = OBJ_KIND_NORMAL;
@@ -1609,7 +1614,7 @@ u8 CreateVirtualObject(u8 graphicsId, u8 virtualObjId, s16 x, s16 y, u8 elevatio
     CopyObjectGraphicsInfoToSpriteTemplate(graphicsId, SpriteCB_VirtualObject, &spriteTemplate, &subspriteTables);
     *(u16 *)&spriteTemplate.paletteTag = TAG_NONE;
     x += MAP_OFFSET;
-    y += MAP_OFFSET;
+    y += MAP_OFFSET_Y;
     SetSpritePosToOffsetMapCoords(&x, &y, 8, 16);
     spriteId = CreateSpriteAtEnd(&spriteTemplate, x, y, 0);
     if (spriteId != MAX_SPRITES)
@@ -1649,8 +1654,13 @@ void TrySpawnObjectEvents(s16 cameraX, s16 cameraY)
 
     if (gMapHeader.events != NULL)
     {
-        s16 left = gSaveBlock1Ptr->pos.x - 2;
-        s16 right = gSaveBlock1Ptr->pos.x + MAP_OFFSET_W + 2;
+        // The widened view shows 1.5 metatiles past each side of the retail
+        // window, and wandering NPCs stray a few tiles from the template
+        // coords this check tests. Load them well before the visible margin
+        // so spawns and the teleport-home on respawn stay offscreen.
+        s16 extraX = GetMapFillExtraX() ? 5 : 0;
+        s16 left = gSaveBlock1Ptr->pos.x - 2 - extraX;
+        s16 right = gSaveBlock1Ptr->pos.x + MAP_OFFSET_W + 2 + extraX;
         s16 top = gSaveBlock1Ptr->pos.y;
         s16 bottom = gSaveBlock1Ptr->pos.y + MAP_OFFSET_H + 2;
 
@@ -1665,7 +1675,7 @@ void TrySpawnObjectEvents(s16 cameraX, s16 cameraY)
         {
             struct ObjectEventTemplate *template = &gSaveBlock1Ptr->objectEventTemplates[i];
             s16 npcX = template->x + MAP_OFFSET;
-            s16 npcY = template->y + MAP_OFFSET;
+            s16 npcY = template->y + MAP_OFFSET_Y;
 
             if (top <= npcY && bottom >= npcY && left <= npcX && right >= npcX
                 && !FlagGet(template->flagId))
@@ -1698,8 +1708,11 @@ void RemoveObjectEventsOutsideView(void)
 
 static void RemoveObjectEventIfOutsideView(struct ObjectEvent *objectEvent)
 {
-    s16 left =   gSaveBlock1Ptr->pos.x - 2;
-    s16 right =  gSaveBlock1Ptr->pos.x + 17;
+    // Keep in step with TrySpawnObjectEvents so objects are not removed from
+    // a window they would immediately respawn into.
+    s16 extraX = GetMapFillExtraX() ? 5 : 0;
+    s16 left =   gSaveBlock1Ptr->pos.x - 2 - extraX;
+    s16 right =  gSaveBlock1Ptr->pos.x + MAP_OFFSET_W + 2 + extraX;
     s16 top =    gSaveBlock1Ptr->pos.y;
     s16 bottom = gSaveBlock1Ptr->pos.y + 16;
 
@@ -2154,7 +2167,7 @@ void TryMoveObjectEventToMapCoords(u8 localId, u8 mapNum, u8 mapGroup, s16 x, s1
     if (!TryGetObjectEventIdByLocalIdAndMap(localId, mapNum, mapGroup, &objectEventId))
     {
         x += MAP_OFFSET;
-        y += MAP_OFFSET;
+        y += MAP_OFFSET_Y;
         MoveObjectEventToMapCoords(&gObjectEvents[objectEventId], x, y);
     }
 }
@@ -2483,7 +2496,7 @@ void OverrideTemplateCoordsForObjectEvent(const struct ObjectEvent *objectEvent)
     if (objectEventTemplate != NULL)
     {
         objectEventTemplate->x = objectEvent->currentCoords.x - MAP_OFFSET;
-        objectEventTemplate->y = objectEvent->currentCoords.y - MAP_OFFSET;
+        objectEventTemplate->y = objectEvent->currentCoords.y - MAP_OFFSET_Y;
     }
 }
 
@@ -7372,7 +7385,10 @@ static void UpdateObjectEventOffscreen(struct ObjectEvent *objectEvent, struct S
     y2 = y;
     y2 += graphicsInfo->height;
 
-    if ((s16)x >= DISPLAY_WIDTH + 16 || (s16)x2 < -16)
+    // Widescreen reveals columns outside the GBA viewport, so the horizontal
+    // cull has to reach that far too or NPCs blink out at the margins. The
+    // stock 16px of slack already covers a margin of 16 or less.
+    if ((s16)x >= DISPLAY_WIDTH + 16 + gRenderMargin || (s16)x2 < -16 - gRenderMargin)
         objectEvent->offScreen = TRUE;
 
     if ((s16)y >= DISPLAY_HEIGHT + 16 || (s16)y2 < -16)

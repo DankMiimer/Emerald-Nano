@@ -16,7 +16,11 @@ EWRAM_DATA bool8 gUnusedBikeCameraAheadPanback = FALSE;
 
 struct FieldCameraOffset
 {
-    u8 xPixelOffset;
+    // Must match the BG map width in pixels. u8 wrapped at 256, which is
+    // correct for a 32-tile map and wrong for a 64-tile (512px) one: after
+    // 16 tiles of walking, HOFS jumped back to the left screenblock and the
+    // room appeared to repeat in a void.
+    u16 xPixelOffset;
     u8 yPixelOffset;
     u8 xTileOffset;
     u8 yTileOffset;
@@ -43,6 +47,18 @@ COMMON_DATA struct CameraObject gFieldCamera = {0};
 COMMON_DATA u16 gTotalCameraPixelOffsetY = 0;
 COMMON_DATA u16 gTotalCameraPixelOffsetX = 0;
 
+// A 64x32 BG map is two 32x32 screenblocks side by side, not one linear
+// 64-wide grid: columns 32-63 live 0x400 entries after the first block. The
+// software PPU reads it that way (bgmap += 0x400 in RenderBGScanline), so the
+// writer has to match. Rows within a block are still 32 entries apart, which
+// is why the second row of a metatile is +0x20 and not +BG_MAP_TILES_X.
+static u32 BgTilemapIndex(u32 x, u32 y)
+{
+    if (GetBgMapTilesX() > 32)
+        return (x >= 32 ? 0x400 : 0) + y * 32 + (x & 31);
+    return y * 32 + (x & 31);
+}
+
 static void ResetCameraOffset(struct FieldCameraOffset *cameraOffset)
 {
     cameraOffset->xTileOffset = 0;
@@ -55,14 +71,15 @@ static void ResetCameraOffset(struct FieldCameraOffset *cameraOffset)
 static void AddCameraTileOffset(struct FieldCameraOffset *cameraOffset, u32 xOffset, u32 yOffset)
 {
     cameraOffset->xTileOffset += xOffset;
-    cameraOffset->xTileOffset %= 32;
+    cameraOffset->xTileOffset %= GetBgMapTilesX();
     cameraOffset->yTileOffset += yOffset;
-    cameraOffset->yTileOffset %= 32;
+    cameraOffset->yTileOffset %= BG_MAP_TILES_Y;
 }
 
 static void AddCameraPixelOffset(struct FieldCameraOffset *cameraOffset, u32 xOffset, u32 yOffset)
 {
     cameraOffset->xPixelOffset += xOffset;
+    cameraOffset->xPixelOffset %= GetBgMapTilesX() * 8;
     cameraOffset->yPixelOffset += yOffset;
 }
 
@@ -71,10 +88,18 @@ void ResetFieldCamera(void)
     ResetCameraOffset(&sFieldCameraOffset);
 }
 
+static int GetMapViewOriginX(void)
+{
+    return gSaveBlock1Ptr->pos.x - (int)GetMapFillExtraX();
+}
+
 void FieldUpdateBgTilemapScroll(void)
 {
     u32 r4, r5;
-    r5 = sFieldCameraOffset.xPixelOffset + sHorizontalCameraPan;
+    // Skip the extra metatiles drawn on the left of the 64-wide tilemap so
+    // the 240px game view stays where sprites and collision already are.
+    r5 = sFieldCameraOffset.xPixelOffset + sHorizontalCameraPan
+       + GetMapFillExtraX() * 16;
     r4 = sVerticalCameraPan + sFieldCameraOffset.yPixelOffset + 8;
 
     SetGpuReg(REG_OFFSET_BG1HOFS, r5);
@@ -103,19 +128,21 @@ static void DrawWholeMapViewInternal(int x, int y, const struct MapLayout *mapLa
     u8 j;
     u32 r6;
     u8 temp;
+    int originX = x - (int)GetMapFillExtraX();
+    u32 mapTilesX = GetBgMapTilesX();
 
-    for (i = 0; i < 32; i += 2)
+    for (i = 0; i < BG_MAP_TILES_Y; i += 2)
     {
         temp = sFieldCameraOffset.yTileOffset + i;
-        if (temp >= 32)
-            temp -= 32;
-        r6 = temp * 32;
-        for (j = 0; j < 32; j += 2)
+        if (temp >= BG_MAP_TILES_Y)
+            temp -= BG_MAP_TILES_Y;
+        r6 = temp;
+        for (j = 0; j < mapTilesX; j += 2)
         {
             temp = sFieldCameraOffset.xTileOffset + j;
-            if (temp >= 32)
-                temp -= 32;
-            DrawMetatileAt(mapLayout, r6 + temp, x + j / 2, y + i / 2);
+            if (temp >= mapTilesX)
+                temp -= mapTilesX;
+            DrawMetatileAt(mapLayout, BgTilemapIndex(temp, r6), originX + j / 2, y + i / 2);
         }
     }
 }
@@ -140,17 +167,18 @@ static void RedrawMapSliceNorth(struct FieldCameraOffset *cameraOffset, const st
     u8 i;
     u8 temp;
     u32 r7;
+    u32 mapTilesX = GetBgMapTilesX();
 
     temp = cameraOffset->yTileOffset + 28;
-    if (temp >= 32)
-        temp -= 32;
-    r7 = temp * 32;
-    for (i = 0; i < 32; i += 2)
+    if (temp >= BG_MAP_TILES_Y)
+        temp -= BG_MAP_TILES_Y;
+    r7 = temp;
+    for (i = 0; i < mapTilesX; i += 2)
     {
         temp = cameraOffset->xTileOffset + i;
-        if (temp >= 32)
-            temp -= 32;
-        DrawMetatileAt(mapLayout, r7 + temp, gSaveBlock1Ptr->pos.x + i / 2, gSaveBlock1Ptr->pos.y + 14);
+        if (temp >= mapTilesX)
+            temp -= mapTilesX;
+        DrawMetatileAt(mapLayout, BgTilemapIndex(temp, r7), GetMapViewOriginX() + i / 2, gSaveBlock1Ptr->pos.y + 14);
     }
 }
 
@@ -158,14 +186,15 @@ static void RedrawMapSliceSouth(struct FieldCameraOffset *cameraOffset, const st
 {
     u8 i;
     u8 temp;
-    u32 r7 = cameraOffset->yTileOffset * 32;
+    u32 r7 = cameraOffset->yTileOffset;
+    u32 mapTilesX = GetBgMapTilesX();
 
-    for (i = 0; i < 32; i += 2)
+    for (i = 0; i < mapTilesX; i += 2)
     {
         temp = cameraOffset->xTileOffset + i;
-        if (temp >= 32)
-            temp -= 32;
-        DrawMetatileAt(mapLayout, r7 + temp, gSaveBlock1Ptr->pos.x + i / 2, gSaveBlock1Ptr->pos.y);
+        if (temp >= mapTilesX)
+            temp -= mapTilesX;
+        DrawMetatileAt(mapLayout, BgTilemapIndex(temp, r7), GetMapViewOriginX() + i / 2, gSaveBlock1Ptr->pos.y);
     }
 }
 
@@ -175,12 +204,12 @@ static void RedrawMapSliceEast(struct FieldCameraOffset *cameraOffset, const str
     u8 temp;
     u32 r6 = cameraOffset->xTileOffset;
 
-    for (i = 0; i < 32; i += 2)
+    for (i = 0; i < BG_MAP_TILES_Y; i += 2)
     {
         temp = cameraOffset->yTileOffset + i;
-        if (temp >= 32)
-            temp -= 32;
-        DrawMetatileAt(mapLayout, temp * 32 + r6, gSaveBlock1Ptr->pos.x, gSaveBlock1Ptr->pos.y + i / 2);
+        if (temp >= BG_MAP_TILES_Y)
+            temp -= BG_MAP_TILES_Y;
+        DrawMetatileAt(mapLayout, BgTilemapIndex(r6, temp), GetMapViewOriginX(), gSaveBlock1Ptr->pos.y + i / 2);
     }
 }
 
@@ -188,16 +217,18 @@ static void RedrawMapSliceWest(struct FieldCameraOffset *cameraOffset, const str
 {
     u8 i;
     u8 temp;
-    u8 r5 = cameraOffset->xTileOffset + 28;
+    u32 mapTilesX = GetBgMapTilesX();
+    u32 lastCol = (mapTilesX / 2) - 1;
+    u8 r5 = cameraOffset->xTileOffset + lastCol * 2;
 
-    if (r5 >= 32)
-        r5 -= 32;
-    for (i = 0; i < 32; i += 2)
+    if (r5 >= mapTilesX)
+        r5 -= mapTilesX;
+    for (i = 0; i < BG_MAP_TILES_Y; i += 2)
     {
         temp = cameraOffset->yTileOffset + i;
-        if (temp >= 32)
-            temp -= 32;
-        DrawMetatileAt(mapLayout, temp * 32 + r5, gSaveBlock1Ptr->pos.x + 14, gSaveBlock1Ptr->pos.y + i / 2);
+        if (temp >= BG_MAP_TILES_Y)
+            temp -= BG_MAP_TILES_Y;
+        DrawMetatileAt(mapLayout, BgTilemapIndex(r5, temp), GetMapViewOriginX() + lastCol, gSaveBlock1Ptr->pos.y + i / 2);
     }
 }
 
@@ -225,7 +256,7 @@ void DrawDoorMetatileAt(int x, int y, u16 *tiles)
 
 static void DrawMetatileAt(const struct MapLayout *mapLayout, u16 offset, int x, int y)
 {
-    u16 metatileId = MapGridGetMetatileIdAt(x, y);
+    u16 metatileId = MapGridGetMetatileIdForDraw(x, y);
     const u16 *metatiles;
 
     if (metatileId > NUM_METATILES_TOTAL)
@@ -239,7 +270,7 @@ static void DrawMetatileAt(const struct MapLayout *mapLayout, u16 offset, int x,
         metatiles = mapLayout->secondaryTileset->metatiles;
         metatileId -= NUM_METATILES_IN_PRIMARY;
     }
-    DrawMetatile(MapGridGetMetatileLayerTypeAt(x, y), metatiles + metatileId * NUM_TILES_PER_METATILE, offset);
+    DrawMetatile(MapGridGetMetatileLayerTypeForDraw(x, y), metatiles + metatileId * NUM_TILES_PER_METATILE, offset);
 }
 
 static void DrawMetatile(s32 metatileLayerType, const u16 *tiles, u16 offset)
@@ -311,22 +342,23 @@ static void DrawMetatile(s32 metatileLayerType, const u16 *tiles, u16 offset)
 
 static s32 MapPosToBgTilemapOffset(struct FieldCameraOffset *cameraOffset, s32 x, s32 y)
 {
-    x -= gSaveBlock1Ptr->pos.x;
-    x *= 2;
-    if (x >= 32 || x < 0)
+    u32 mapTilesX = GetBgMapTilesX();
+
+    x = (x - GetMapViewOriginX()) * 2;
+    if (x >= (int)mapTilesX || x < 0)
         return -1;
     x = x + cameraOffset->xTileOffset;
-    if (x >= 32)
-        x -= 32;
+    if (x >= (int)mapTilesX)
+        x -= mapTilesX;
 
     y = (y - gSaveBlock1Ptr->pos.y) * 2;
-    if (y >= 32 || y < 0)
+    if (y >= BG_MAP_TILES_Y || y < 0)
         return -1;
     y = y + cameraOffset->yTileOffset;
-    if (y >= 32)
-        y -= 32;
+    if (y >= BG_MAP_TILES_Y)
+        y -= BG_MAP_TILES_Y;
 
-    return y * 32 + x;
+    return BgTilemapIndex(x, y);
 }
 
 static void CameraUpdateCallback(struct CameraObject *fieldCamera)
@@ -418,6 +450,16 @@ void CameraUpdate(void)
         SetBerryTreesSeen();
         AddCameraTileOffset(&sFieldCameraOffset, deltaX * 2, deltaY * 2);
         RedrawMapSlicesForCameraUpdate(&sFieldCameraOffset, deltaX * 2, deltaY * 2);
+#ifdef PLATFORM_SDL2
+        // Crossing a map connection swaps the backup map underneath the wide
+        // view. The new map's connection strips only reach 7 metatiles past
+        // its edge, so wide-margin columns drawn from the old map would stay
+        // behind as stale stamps (border trees over real ground) until the
+        // next full draw. Repaint the whole wide tilemap from the fresh
+        // backup; on this port that is a cheap RAM fill.
+        if (gCamera.active && GetMapFillExtraX() != 0)
+            DrawWholeMapView();
+#endif
     }
 
     AddCameraPixelOffset(&sFieldCameraOffset, movementSpeedX, movementSpeedY);

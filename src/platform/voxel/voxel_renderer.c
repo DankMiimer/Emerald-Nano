@@ -332,9 +332,9 @@ static bool GetVoxelObjectWorldPos(struct ObjectEvent *obj, float *outX, float *
 
     // Convert backup-layout coords to map-local coords
     float prevX = (float)(obj->previousCoords.x - MAP_OFFSET);
-    float prevZ = (float)(obj->previousCoords.y - MAP_OFFSET);
+    float prevZ = (float)(obj->previousCoords.y - MAP_OFFSET_Y);
     float curX  = (float)(obj->currentCoords.x  - MAP_OFFSET);
-    float curZ  = (float)(obj->currentCoords.y  - MAP_OFFSET);
+    float curZ  = (float)(obj->currentCoords.y  - MAP_OFFSET_Y);
 
     float t = GetMovementProgress(obj, sprite);
 

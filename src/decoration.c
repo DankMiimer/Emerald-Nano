@@ -1494,7 +1494,7 @@ static bool8 IsSecretBaseTrainerSpot(u8 behaviorAt, u16 layerType)
 static bool8 IsntInitialPosition(u8 taskId, s16 x, s16 y, u16 layerType)
 {
     if (x == gTasks[taskId].tInitialX + MAP_OFFSET
-     && y == gTasks[taskId].tInitialY + MAP_OFFSET
+     && y == gTasks[taskId].tInitialY + MAP_OFFSET_Y
      && layerType != METATILE_LAYER_TYPE_NORMAL)
         return FALSE;
     return TRUE;
@@ -1671,7 +1671,7 @@ static void PlaceDecoration(u8 taskId)
     else
     {
         sCurDecorMapX = gTasks[taskId].tCursorX - MAP_OFFSET;
-        sCurDecorMapY = gTasks[taskId].tCursorY - MAP_OFFSET;
+        sCurDecorMapY = gTasks[taskId].tCursorY - MAP_OFFSET_Y;
         ScriptContext_SetupScript(SecretBase_EventScript_SetDecoration);
     }
 
@@ -1691,7 +1691,7 @@ static void PlaceDecoration_(u8 taskId)
         if (sDecorationContext.items[i] == DECOR_NONE)
         {
             sDecorationContext.items[i] = gCurDecorationItems[gCurDecorationIndex];
-            sDecorationContext.pos[i] = ((gTasks[taskId].tCursorX - MAP_OFFSET) << 4) + (gTasks[taskId].tCursorY - MAP_OFFSET);
+            sDecorationContext.pos[i] = ((gTasks[taskId].tCursorX - MAP_OFFSET) << 4) + (gTasks[taskId].tCursorY - MAP_OFFSET_Y);
             break;
         }
     }
@@ -2248,7 +2248,7 @@ static void ClearRearrangementNonSprites(void)
             {
                 for (x = 0; x < sDecorRearrangementDataBuffer[i].width; x++)
                 {
-                    MapGridSetMetatileEntryAt(posX + MAP_OFFSET + x, posY + MAP_OFFSET - y, gMapHeader.mapLayout->map[posX + x + gMapHeader.mapLayout->width * (posY - y)] | 0x3000);
+                    MapGridSetMetatileEntryAt(posX + MAP_OFFSET + x, posY + MAP_OFFSET_Y - y, gMapHeader.mapLayout->map[posX + x + gMapHeader.mapLayout->width * (posY - y)] | 0x3000);
                 }
             }
 
@@ -2488,11 +2488,11 @@ static bool8 DecorationIsUnderCursor(u8 taskId, u8 idx, struct DecorRearrangemen
     u8 ht;
 
     x = gTasks[taskId].tCursorX - MAP_OFFSET;
-    y = gTasks[taskId].tCursorY - MAP_OFFSET;
+    y = gTasks[taskId].tCursorY - MAP_OFFSET_Y;
     xOff = sDecorationContext.pos[idx] >> 4;
     yOff = sDecorationContext.pos[idx] & 0x0F;
     ht = data->height;
-    if (sDecorationContext.items[idx] == DECOR_SAND_ORNAMENT && MapGridGetMetatileIdAt(xOff + MAP_OFFSET, yOff + MAP_OFFSET) == METATILE_SecretBase_SandOrnament_BrokenBase)
+    if (sDecorationContext.items[idx] == DECOR_SAND_ORNAMENT && MapGridGetMetatileIdAt(xOff + MAP_OFFSET, yOff + MAP_OFFSET_Y) == METATILE_SecretBase_SandOrnament_BrokenBase)
         ht--;
 
     if (x >= xOff && x < xOff + data->width && y > yOff - ht && y <= yOff)

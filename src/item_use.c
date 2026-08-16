@@ -372,7 +372,7 @@ static bool8 ItemfinderCheckForHiddenItems(const struct MapEvents *events, u8 ta
         {
             itemX = (u16)events->bgEvents[i].x + MAP_OFFSET;
             distanceX = itemX - playerX;
-            itemY = (u16)events->bgEvents[i].y + MAP_OFFSET;
+            itemY = (u16)events->bgEvents[i].y + MAP_OFFSET_Y;
             distanceY = itemY - playerY;
 
             // Player can see 7 metatiles on either side horizontally
@@ -419,7 +419,7 @@ static bool8 IsHiddenItemPresentInConnection(const struct MapConnection *connect
 //  - Account for map size. (0,0) is in the NW corner of our map, so when looking North/West we have to add the height/width of the connected map,
 //     and when looking South/East we have to subtract the height/width of our current map.
 #define localX (x - MAP_OFFSET)
-#define localY (y - MAP_OFFSET)
+#define localY (y - MAP_OFFSET_Y)
     switch (connection->direction)
     {
     case CONNECTION_NORTH:
@@ -452,10 +452,10 @@ static void CheckForHiddenItemsInMapConnection(u8 taskId)
     s16 playerX, playerY;
     s16 x, y;
     s16 width = gMapHeader.mapLayout->width + MAP_OFFSET;
-    s16 height = gMapHeader.mapLayout->height + MAP_OFFSET;
+    s16 height = gMapHeader.mapLayout->height + MAP_OFFSET_Y;
 
     s16 var1 = MAP_OFFSET;
-    s16 var2 = MAP_OFFSET;
+    s16 var2 = MAP_OFFSET_Y;
 
     PlayerGetDestCoords(&playerX, &playerY);
 

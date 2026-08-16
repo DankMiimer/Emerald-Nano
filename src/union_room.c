@@ -4010,7 +4010,7 @@ static bool32 IsPlayerFacingTradingBoard(void)
     if (x != 2 + MAP_OFFSET)
         return FALSE;
 
-    if (y != 1 + MAP_OFFSET)
+    if (y != 1 + MAP_OFFSET_Y)
         return FALSE;
 
     if (gPlayerAvatar.tileTransitionState == T_TILE_CENTER || gPlayerAvatar.tileTransitionState == T_NOT_MOVING)
