@@ -64,6 +64,13 @@ static SDL_SpinLock sVirtualKeyLock;
 static int sVirtualKeyHead;
 static int sVirtualKeyCount;
 
+// Battle menu cursor, republished every frame rather than once per snapshot.
+// The bottom screen draws the engine's own cursor, and at the snapshot's
+// cadence (8 frames, then a 120ms poll) it would trail a d-pad press by a
+// quarter second. Written by the frame thread, read by the Java UI thread;
+// one word, so a reader only ever sees a whole value, at worst one frame old.
+static SDL_atomic_t sBattleCursor;
+
 #ifdef __ANDROID__
 #include <dlfcn.h>
 #include <elf.h>
@@ -710,6 +717,30 @@ static void WriteBattleMonJson(struct JsonWriter *w, struct BattlePokemon *mon,
     JsonPut(w, "}");
 }
 
+// Which battler owns the open bottom-screen battle menu, and which menu it
+// is: 0 none, 1 action select, 2 move select. In doubles the two player mons
+// pick sequentially, so this follows whichever battler the open menu belongs
+// to. Shared by the snapshot and the per-frame cursor publish so the cursor
+// the bottom screen highlights can never disagree with the rest of the state.
+static int ResolveBattleMenu(u8 *battlerOut)
+{
+    u8 battler = GetBattlerAtPosition(B_POSITION_PLAYER_LEFT);
+    int menu = 0;
+
+    if (DualScreen_BattleUiActive())
+    {
+        s32 menuBattler = DualScreen_PlayerMoveBattler();
+        if (menuBattler >= 0)
+            menu = 2;
+        else if ((menuBattler = DualScreen_PlayerActionBattler()) >= 0)
+            menu = 1;
+        if (menuBattler >= 0 && menuBattler < MAX_BATTLERS_COUNT)
+            battler = (u8)menuBattler;
+    }
+    *battlerOut = battler;
+    return menu;
+}
+
 // Reads pockets straight from the save block rather than through
 // gBagPockets: those runtime pointers are only wired by
 // SetBagItemsPointers() and hold garbage before then (caused a crash).
@@ -868,22 +899,9 @@ static void BuildSnapshot(char *buffer, int capacity)
 
         if (gMain.inBattle && gBattlersCount > 0 && gBattlersCount <= MAX_BATTLERS_COUNT)
         {
-            u8 playerBattler = GetBattlerAtPosition(B_POSITION_PLAYER_LEFT);
+            u8 playerBattler;
             u8 enemyBattler = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
-            int menu = 0;
-
-            // In doubles the two player mons pick sequentially; show whichever
-            // battler the open menu belongs to.
-            if (DualScreen_BattleUiActive())
-            {
-                s32 menuBattler = DualScreen_PlayerMoveBattler();
-                if (menuBattler >= 0)
-                    menu = 2;
-                else if ((menuBattler = DualScreen_PlayerActionBattler()) >= 0)
-                    menu = 1;
-                if (menuBattler >= 0 && menuBattler < MAX_BATTLERS_COUNT)
-                    playerBattler = menuBattler;
-            }
+            int menu = ResolveBattleMenu(&playerBattler);
 
             if (playerBattler < MAX_BATTLERS_COUNT && enemyBattler < MAX_BATTLERS_COUNT)
             {
@@ -1006,6 +1024,22 @@ void DualScreen_FrameHook(void)
     if (DualScreen_BattleUiActive() && gMain.inBattle
      && (DualScreen_PlayerAtMoveSelect() || DualScreen_PlayerAtActionSelect()))
         gBattle_BG0_Y = 0;
+
+    // Republished every frame, ahead of the snapshot throttle: this is what
+    // the bottom screen draws its cursor ring from.
+    {
+        int packed = -1;
+        if (gMain.inBattle && gBattlersCount > 0 && gBattlersCount <= MAX_BATTLERS_COUNT)
+        {
+            u8 battler;
+            int menu = ResolveBattleMenu(&battler);
+            if (menu != 0 && battler < MAX_BATTLERS_COUNT)
+                packed = (menu << 16)
+                       | (gActionSelectionCursor[battler] << 8)
+                       | gMoveSelectionCursor[battler];
+        }
+        SDL_AtomicSet(&sBattleCursor, packed);
+    }
 
     if (++sFrameCounter % SNAPSHOT_FRAME_INTERVAL != 0)
         return;
@@ -1133,6 +1167,15 @@ JNIEXPORT jint JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_native
         }
     }
     return 0;
+}
+
+// The battle menu cursor on its own, so the ring can track a d-pad press
+// without waiting for a whole snapshot. Packed (menu << 16) | (action << 8) |
+// move; -1 when no bottom-screen battle menu is open. Nothing here touches
+// game memory - it reads the word the frame thread last published.
+JNIEXPORT jint JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetBattleCursor(JNIEnv *env, jclass clazz)
+{
+    return SDL_AtomicGet(&sBattleCursor);
 }
 
 JNIEXPORT jstring JNICALL Java_com_pokeemerald_experimental_DualScreenBridge_nativeGetSnapshotJson(JNIEnv *env, jclass clazz)

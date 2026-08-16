@@ -39,6 +39,9 @@ public final class DualScreenView extends View {
     private static final int BG_DOT = 0xFFB8E4CE;
     private static final int HEADER_GREEN = 0xFF50C484;
     private static final int HEADER_GREEN_DARK = 0xFF2E9A62;
+    // Repaint pace while a battle menu is open, so the cursor ring tracks the
+    // d-pad rather than the snapshot pump.
+    private static final int CURSOR_REPAINT_MS = 33;
     private static final int BAR_CREAM = 0xFFF8F0B0;
     private static final int BAR_CREAM_DARK = 0xFFE8CE7A;
     private static final int BAR_BORDER = 0xFFA88848;
@@ -895,6 +898,45 @@ public final class DualScreenView extends View {
         }
     }
 
+    /**
+     * Ring around the battler's current selection, mirroring the engine's own
+     * action/move cursor so the physical buttons show where they are: with
+     * the battle menus down here the top screen draws no cursor at all, so
+     * without this a D-pad press moves something invisible. Sits in the gap
+     * outside the cell rather than over it, so nothing on the card is
+     * covered, in the selection gold the move bars already use.
+     */
+    /**
+     * Cursor index to highlight for the menu being drawn, preferring the
+     * per-frame native publish over the snapshot: the snapshot is rebuilt
+     * every 8 frames and polled at 120ms, so on its own the ring would trail
+     * a d-pad press by up to a quarter second. Falls back to the snapshot
+     * when the fast read reports no menu, or a different one than we are
+     * drawing.
+     */
+    private int liveCursor(int menu, int fallback) {
+        int packed = DualScreenBridge.nativeGetBattleCursor();
+        if (packed < 0 || ((packed >> 16) & 0xFF) != menu) {
+            return fallback;
+        }
+        return menu == 1 ? (packed >> 8) & 0xFF : packed & 0xFF;
+    }
+
+    private void drawCursorRing(Canvas canvas, RectF cell, float radius) {
+        float grow = Math.max(4f, Math.min(10f,
+                Math.min(cell.width(), cell.height()) * 0.022f));
+        RectF ring = new RectF(cell);
+        ring.inset(-grow, -grow);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(grow * 1.6f);
+        paint.setColor(0xFF3A2E14); // dark backing, so the gold reads on any fill
+        canvas.drawRoundRect(ring, radius + grow, radius + grow, paint);
+        paint.setStrokeWidth(grow * 0.9f);
+        paint.setColor(0xFFF8B850);
+        canvas.drawRoundRect(ring, radius + grow, radius + grow, paint);
+        paint.setStyle(Paint.Style.FILL);
+    }
+
     private void drawHeader(Canvas canvas, String title, float scale) {
         RectF bar = new RectF(0, 0, getWidth(), GbaFont.LINE_HEIGHT * scale * 1.6f);
         paint.setColor(HEADER_GREEN);
@@ -1486,6 +1528,7 @@ public final class DualScreenView extends View {
         } else {
             // Move grid: name, type icon, PP, PWR/ACC, effectiveness hint.
             boolean active = state.battleMenu == 2;
+            int cursor = liveCursor(2, state.moveCursor);
             float cancelH = active ? contentHeight * 0.085f : 0;
             float cellH = (contentHeight - gridTop - pad * 2 - cancelH - (active ? pad : 0)) / 2;
             float cellW = (getWidth() - pad * 3) / 2;
@@ -1497,7 +1540,11 @@ public final class DualScreenView extends View {
                     if (active) {
                         battleButtons[i].set(cell);
                     }
-                    drawBar(canvas, cell, active, null, scale);
+                    // The engine's move cursor picks the highlighted cell.
+                    // Before, every cell was drawn selected, which made the
+                    // bar's own highlight mean nothing.
+                    boolean onCursor = active && i == cursor;
+                    drawBar(canvas, cell, onCursor, null, scale);
                     DualScreenState.Move move = self.moves.get(i);
                     float inset = cellH * 0.14f;
                     float nameScale = scale * 1.35f;
@@ -1530,6 +1577,9 @@ public final class DualScreenView extends View {
                         drawEffMarker(canvas, move.eff[1], mx, my, mr);
                         drawEffMarker(canvas, move.eff[0], mx - mr * 4.2f, my, mr);
                     }
+                    if (onCursor) {
+                        drawCursorRing(canvas, cell, 6);
+                    }
                 } else {
                     paint.setColor(0x44A88848);
                     canvas.drawRoundRect(cell, 8, 8, paint);
@@ -1542,6 +1592,11 @@ public final class DualScreenView extends View {
                 drawBar(canvas, cancel, false, "CANCEL", scale * 0.9f);
             }
         }
+        // A menu is open, so the cursor can move under the player's thumb at
+        // any moment. Snapshot updates alone would repaint at about 8fps;
+        // this keeps the ring following the d-pad. Only runs while a menu is
+        // up - the idle screen and the takeover panels have their own pacing.
+        postInvalidateDelayed(CURSOR_REPAINT_MS);
     }
 
     /**
@@ -1618,11 +1673,18 @@ public final class DualScreenView extends View {
         float contentHeight = getHeight();
         float gridTop = pad;
         boolean runDisabled = state.battleKind == 1; // no running from trainers
+        // The engine indexes the command cursor over its own 2x2 box
+        // (FIGHT/BAG over POKeMON/RUN), which is the order these buttons are
+        // in even though the DP layout arranges them differently.
+        int cursor = liveCursor(1, state.actionCursor);
 
         float fightH = (contentHeight - gridTop - pad * 2) * 0.56f;
         RectF fight = new RectF(pad, gridTop, getWidth() - pad, gridTop + fightH);
         battleButtons[0].set(fight);
         drawCommandButton(canvas, fight, 0, battlePressedCmd == 0, true, scale * 2.1f);
+        if (cursor == 0) {
+            drawCursorRing(canvas, fight, 16);
+        }
 
         float smallTop = fight.bottom + pad;
         float smallW = (getWidth() - pad * 4) / 3f;
@@ -1632,6 +1694,9 @@ public final class DualScreenView extends View {
             battleButtons[i].set(cell);
             drawCommandButton(canvas, cell, i, battlePressedCmd == i,
                     !(i == 3 && runDisabled), scale * 1.1f);
+            if (cursor == i) {
+                drawCursorRing(canvas, cell, 16);
+            }
         }
     }
 

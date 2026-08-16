@@ -11,6 +11,15 @@ public final class DualScreenBridge {
     public static native String nativeGetSnapshotJson();
 
     /**
+     * The battle menu cursor on its own, republished every frame so the
+     * bottom screen's cursor ring can follow a d-pad press instead of
+     * trailing the snapshot. Packed (menu &lt;&lt; 16) | (action &lt;&lt; 8)
+     * | move, where menu is 1 action select / 2 move select; -1 when no
+     * bottom-screen battle menu is open.
+     */
+    public static native int nativeGetBattleCursor();
+
+    /**
      * Renders a 32x32 party icon frame (0 or 1) for a species into
      * ARGB_8888 pixels (row-major, length 32*32), decoded from the game's
      * own icon data. Returns null for invalid species.
