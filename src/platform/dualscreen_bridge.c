@@ -83,6 +83,7 @@ static SDL_SpinLock sNavLock;
 static int sNavHead;
 static int sNavCount;
 static u32 sVirtualInputFrame; // last frame a queued virtual key was handed out
+static u32 sButtonPressCount;  // real button presses during a battle menu, 7 bits
 
 // Battle menu cursor, republished every frame rather than once per snapshot.
 // The bottom screen draws the engine's own cursor, and at the snapshot's
@@ -1116,7 +1117,17 @@ void DualScreen_FrameHook(void)
             u8 battler;
             int menu = ResolveBattleMenu(&battler);
             if (menu != 0 && battler < MAX_BATTLERS_COUNT)
-                packed = (menu << 16)
+            {
+                // Counts real button presses only - virtual keys are the ones
+                // a tap injects, and counting those would make every tap look
+                // like button input. The bottom screen shows its cursor when
+                // this moves and hides it on touch, the way the DS games flip
+                // between the two (TouchscreenListMenu's isTouch).
+                if (sVirtualKeyCount == 0 && sFrameCounter - sVirtualInputFrame > 4
+                 && (gMain.newKeys & (DPAD_ANY | A_BUTTON | B_BUTTON)))
+                    sButtonPressCount = (sButtonPressCount + 1) & 0x7F;
+                packed = (sButtonPressCount << 24)
+                       | (menu << 16)
                        | (gActionSelectionCursor[battler] << 8)
                        | gMoveSelectionCursor[battler];
         }

@@ -47,6 +47,8 @@ public final class DualScreenView extends View {
     private static final int MENU_HOLD_MS = 180;
     private int lastLiveMenu;
     private long lastLiveMenuMs;
+    private int lastPressCount = -1;   // native real-button-press counter
+    private boolean showCursor;        // last battle input was buttons, not touch
     private static final int BAR_CREAM = 0xFFF8F0B0;
     private static final int BAR_CREAM_DARK = 0xFFE8CE7A;
     private static final int BAR_BORDER = 0xFFA88848;
@@ -209,6 +211,7 @@ public final class DualScreenView extends View {
         if (!isCapturingKeys()) {
             return;
         }
+        showCursor = true;
         switch (action) {
         case NAV_UP: case NAV_DOWN: case NAV_LEFT: case NAV_RIGHT:
             if (battlePanel == 1) {
@@ -628,6 +631,9 @@ public final class DualScreenView extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            showCursor = false; // a finger takes the screen back from the cursor
+        }
         // Battle bag panel: drag to scroll, tap to select/use.
         if (state.inBattle && battlePanel == 1) {
             switch (event.getActionMasked()) {
@@ -1154,6 +1160,16 @@ public final class DualScreenView extends View {
         int packed = DualScreenBridge.nativeGetBattleCursor();
         int menu = packed >= 0 ? (packed >> 16) & 0xFF : state.battleMenu;
         if (menu != 0) {
+        if (packed >= 0) {
+            // The DS games show the cursor once you touch the d-pad and drop
+            // it the moment a finger takes over, rather than carrying both
+            // affordances at once. The native side counts real presses only.
+            int presses = (packed >> 24) & 0x7F;
+            if (lastPressCount >= 0 && presses != lastPressCount) {
+                showCursor = true;
+            }
+            lastPressCount = presses;
+        }
             lastLiveMenu = menu;
             lastLiveMenuMs = now;
             return menu;
@@ -1182,15 +1198,20 @@ public final class DualScreenView extends View {
     private void drawCursorRing(Canvas canvas, RectF cell, float radius, boolean outside) {
         float grow = Math.max(4f, Math.min(10f,
                 Math.min(cell.width(), cell.height()) * 0.022f));
+        if (!showCursor) {
+            return;
+        }
         RectF ring = new RectF(cell);
         ring.inset(outside ? -grow : grow, outside ? -grow : grow);
         float r = outside ? radius + grow : Math.max(0, radius - grow);
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(grow * 1.6f);
-        paint.setColor(0xFF3A2E14); // dark backing, so the gold reads on any fill
+        paint.setColor(0xFF702008); // dark backing, so the border reads on any fill
         canvas.drawRoundRect(ring, r, r, paint);
         paint.setStrokeWidth(grow * 0.9f);
-        paint.setColor(0xFFF8B850);
+        // A selection is marked with an orange-red border throughout the
+        // series - the GBA party list slot and the DS bag grid both do it.
+        paint.setColor(0xFFF05030);
         canvas.drawRoundRect(ring, r, r, paint);
         paint.setStyle(Paint.Style.FILL);
     }
