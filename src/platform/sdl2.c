@@ -888,16 +888,18 @@ static void ApplyDisplayMode(void)
     if (sdlRenderer == NULL)
         return;
 #ifdef __ANDROID__
-    if (sPlatformSettings[PLATFORM_SETTING_WIDESCREEN])
-    {
-        SDL_RenderSetLogicalSize(sdlRenderer, 0, 0);
-        SDL_RenderSetIntegerScale(sdlRenderer, SDL_FALSE);
-    }
-    else
-    {
-        SDL_RenderSetIntegerScale(sdlRenderer, SDL_TRUE);
-        SDL_RenderSetLogicalSize(sdlRenderer, DISPLAY_WIDTH, DISPLAY_HEIGHT);
-    }
+    // Follows the width the PPU renders, exactly as the draw loop does.
+    //
+    // This used to stretch a 240px frame over the whole surface for
+    // widescreen and pin 240x160 otherwise, which is the model widescreen
+    // had before the PPU learned to render wider. Left on that model it
+    // silently undid the new one: this runs immediately before every
+    // present, so whatever the draw loop had set was overwritten a moment
+    // later and widescreen came out as a stretch rather than more picture.
+    SDL_RenderSetLogicalSize(sdlRenderer, gRenderWidth, DISPLAY_HEIGHT);
+    // Integer scaling would round 288x160 down on a 1080p panel and hand the
+    // letterbox straight back, so it only applies to the narrow frame.
+    SDL_RenderSetIntegerScale(sdlRenderer, gRenderMargin == 0 ? SDL_TRUE : SDL_FALSE);
 #endif
 }
 
