@@ -15,11 +15,10 @@
 // active geometry at runtime so the setting can be toggled without a rebuild.
 // Buffer index 0 holds game-space column -gRenderMargin.
 // 24 fills a 16:9 panel: 240 + 48 = 288, which is 1.8:1 and lands within a
-// few pixels of 1920x1080. It needs the overworld map layers widened to 512px
-// first, though -- until then only an 8px margin (256px, 1.6:1) has real map
-// behind it, because that is all a 256px-wide BG map can cover.
+// few pixels of 1920x1080. Overworld BG maps are 512px wide so those margin
+// columns contain real map tiles rather than wrapped copies of the 240px view.
 #define MAX_RENDER_MARGIN 24
-#define WIDESCREEN_MARGIN 8
+#define WIDESCREEN_MARGIN 24
 #define MAX_RENDER_WIDTH  (DISPLAY_WIDTH + 2 * MAX_RENDER_MARGIN)
 
 // Layers narrower than the widened frame skip the margin columns entirely, so

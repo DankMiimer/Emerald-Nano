@@ -471,12 +471,34 @@ static bool alphaBlendSelectTargetB(struct scanlineData* scanline, uint16_t* col
 }
 
 //checks if window horizontal is in bounds and takes account WIN wraparound
-static bool winCheckHorizontalBounds(u16 left, u16 right, u16 xpos)
+// Window registers can only express coordinates inside the GBA's 240px
+// screen, so a game that wants a full-screen window (the overworld does, via
+// WIN0H = 0x00FF) can never say "cover the widescreen margins too". Treat an
+// edge sitting on the screen boundary as "to the edge of the frame" and
+// stretch it across the margin; interior edges (the cave flash circle, battle
+// transitions) keep their exact game-space coordinates.
+// Only screens whose BG maps are wide enough to fill the margins get the
+// extension; everywhere else (indoors, battles, menus) the window keeps its
+// GBA bounds so the margins stay masked and sprites clip at the screen edge
+// exactly like vanilla hardware. Set per scanline before the window mask.
+static bool sWinExtendMargins;
+
+static int winExtendLeft(u16 left)
+{
+    return (sWinExtendMargins && left == 0) ? -gRenderMargin : (int)left;
+}
+
+static int winExtendRight(u16 right)
+{
+    return (sWinExtendMargins && right >= DISPLAY_WIDTH) ? DISPLAY_WIDTH + gRenderMargin : (int)right;
+}
+
+static bool winCheckHorizontalBounds(u16 left, u16 right, int xpos)
 {
     if (left > right)
-        return (xpos >= left || xpos < right);
+        return (xpos >= (int)left || xpos < (int)right);
     else
-        return (xpos >= left && xpos < right);
+        return (xpos >= winExtendLeft(left) && xpos < winExtendRight(right));
 }
 
 // Parts of this code heavily borrowed from NanoboyAdvance.
@@ -544,7 +566,14 @@ static void DrawSprites(struct scanlineData* scanline, uint16_t vcount, bool win
         int32_t x = oam->x;
         int32_t y = oam->y;
 
-        if (x >= DISPLAY_WIDTH)
+        // OAM x is 9 bits, so position wraps within 512. The old cutoff
+        // treated everything at 240+ as wrapping in from the left, which on
+        // real hardware is indistinguishable from offscreen-right -- but with
+        // widened margins, x in [240, 240+margin) is genuinely visible on the
+        // right. Only wrap values too large to reach the frame from the right;
+        // [384, 511] still decodes to [-128, -1] for sprites entering from
+        // the left (max sprite width is 64, margin at most 24).
+        if (x >= 512 - 128)
             x -= 512;
         if (y >= DISPLAY_HEIGHT)
             y -= 256;
@@ -797,10 +826,13 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
     //figure out if WIN1 masks on this scanline
     if (REG_DISPCNT & DISPCNT_WIN1_ON)
     {
-        WIN1bottom = (REG_WIN0V & 0xFF); //y2;
-        WIN1top = (REG_WIN0V & 0xFF00) >> 8; //y1;
-        WIN1right = (REG_WIN0H & 0xFF); //x2
-        WIN1left = (REG_WIN0H & 0xFF00) >> 8; //x1
+        // Read WIN1's own registers -- this used WIN0's, which made WIN1 a
+        // silent duplicate of WIN0 instead of the empty window the overworld
+        // configures (WIN1H = 0xFFFF).
+        WIN1bottom = (REG_WIN1V & 0xFF); //y2;
+        WIN1top = (REG_WIN1V & 0xFF00) >> 8; //y1;
+        WIN1right = (REG_WIN1H & 0xFF); //x2
+        WIN1left = (REG_WIN1H & 0xFF00) >> 8; //x1
         
         if (WIN1top > WIN1bottom) {
             if (vcount >= WIN1top || vcount < WIN1bottom)
@@ -818,6 +850,21 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
         windowsEnabled = true;
     }
     
+    // Extend screen-edge window bounds across the margins only when some
+    // enabled text BG is 512px wide (screen size 1 or 3) and can actually
+    // fill them -- the widened overworld. Otherwise keep GBA bounds so
+    // narrow screens stay masked to the 240px view like real hardware.
+    sWinExtendMargins = false;
+    {
+        int bgnum;
+        for (bgnum = 0; bgnum < 4; bgnum++)
+        {
+            if ((REG_DISPCNT & (1 << (8 + bgnum)))
+             && (scanline.bgcnts[bgnum] >> 14) & 1)
+                sWinExtendMargins = true;
+        }
+    }
+
     //draw to pixel mask
     if (windowsEnabled)
     {
