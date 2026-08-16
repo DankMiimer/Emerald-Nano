@@ -1242,8 +1242,13 @@ public final class DualScreenView extends View {
         if (!showCursor) {
             return;
         }
-        float grow = Math.max(4f, Math.min(10f,
-                Math.min(cell.width(), cell.height()) * 0.022f));
+        // Inside rings sit on the party staircase, whose slots are short: the
+        // thickness that suits the big battle buttons all but disappears on
+        // them, so they get their own, heavier weight. The real party cursor
+        // is a thick border, not a hairline.
+        float grow = outside
+                ? Math.max(4f, Math.min(10f, Math.min(cell.width(), cell.height()) * 0.022f))
+                : Math.max(6f, Math.min(16f, Math.min(cell.width(), cell.height()) * 0.075f));
         RectF ring = new RectF(cell);
         ring.inset(outside ? -grow : grow, outside ? -grow : grow);
         float r = outside ? radius + grow : Math.max(0, radius - grow);
@@ -2370,6 +2375,11 @@ public final class DualScreenView extends View {
                 float subY = wy + (lead ? 20 : 12) * s;
                 int statusIdx = statusIconIndex(mon.status, mon.hp);
                 if (statusIdx < 0) {
+                // The game's own cursor lightens the box as well as bordering
+                // it (AnimatePartySlot swaps the whole box palette), which is
+                // most of why the real one reads at a glance.
+                paint.setColor(0x38FFFFFF);
+                canvas.drawRoundRect(slot, 4, 4, paint);
                     f.draw(canvas, "Lv" + mon.level, wx + (lead ? 32 : 30) * s, subY,
                             subScale, PARTY_TEXT, PARTY_TEXT_SHADOW);
                     if (mon.gender == 0) {
