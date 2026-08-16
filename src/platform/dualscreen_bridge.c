@@ -259,7 +259,7 @@ static u32 sBattleMenuMode;   // controller wait state: 0 closed, 1 bag, 2 party
 static u32 sBattleMenuCaseId; // PARTY_ACTION_* for the party wait state
 static u32 sBattleMenuBattler;
 static u32 sBattleMenuResult; // DS_BMENU_RESULT_* of the last submission
-static u32 sBattleMenuSeq;    // bumps whenever result changes, for the UI
+static u32 sBattleMenuSeq;    // bumps on every menu open and result, for the UI
 static u32 sBattleChoicePending;
 static s32 sBattleChoiceA;
 static s32 sBattleChoiceB;
@@ -274,6 +274,16 @@ u32 DualScreen_TakeBattleTakeover(u32 mode)
         sBattleArmMode = 0;
     }
     SDL_AtomicUnlock(&sBattleMenuLock);
+    // Not armed: BAG or POKeMON was chosen with the physical buttons rather
+    // than tapped. The bottom screen still owns the choice as long as it is
+    // there to show it, which is the rule the forced send-out already uses.
+    // This deliberately fell through to the GBA menus back when the panels
+    // could only be worked with a finger; now that the buttons drive them
+    // too, falling through would just mean the two ways of choosing the same
+    // action opened two different UIs. The arm is still what makes a tap
+    // engage on the very frame it happens.
+    if (!taken)
+        taken = DualScreen_BottomScreenLive();
     return taken;
 }
 
@@ -285,6 +295,10 @@ void DualScreen_SetBattleMenuOpen(u32 mode, u32 caseId, u32 battler)
     sBattleMenuBattler = battler;
     sBattleMenuResult = DS_BMENU_RESULT_NONE;
     sBattleChoicePending = FALSE; // a fresh menu never inherits a stale choice
+    // Bumped on an open as well as on a result, so the bottom screen can tell
+    // a brand new wait from the one it just closed and still sees in a stale
+    // snapshot. Without that it cannot reopen promptly after a cancel.
+    sBattleMenuSeq++;
     SDL_AtomicUnlock(&sBattleMenuLock);
 }
 

@@ -327,8 +327,14 @@ public final class DualScreenView extends View {
             battlePanel = 0;
             return;
         }
+        // The sequence bumps on every wait the engine opens as well as on
+        // every result, so a bump carrying no result is a brand new menu -
+        // which is what tells a fresh open apart from the wait we just closed
+        // and can still see in a snapshot that has not caught up yet.
+        boolean freshWait = false;
         if (state.battleSubSeq != lastSubSeq) {
             lastSubSeq = state.battleSubSeq;
+            freshWait = state.battleSubResult == 0;
             switch (state.battleSubResult) {
             case 2:  battleNotice = "It won't have any effect."; break;
             case 3:  battleNotice = "It can't be used now."; break;
@@ -341,13 +347,16 @@ public final class DualScreenView extends View {
         }
         long now = System.currentTimeMillis();
         if (battlePanel == 0 && state.battleSub != 0
-                && (now - battleCloseMs > 1500 || battleSendOutWait())) {
-            // The engine is waiting on us but no panel is up: either a
+                && (freshWait || now - battleCloseMs > 1500 || battleSendOutWait())) {
+            // The engine is waiting on us but no panel is up: a menu chosen
+            // with the physical buttons (no tap sets the panel up front), a
             // reopen after a race, or a forced send-out (a fainted mon needs
             // a replacement), which arrives with no arming tap and opens the
             // party staircase proactively - immediately, so the second
             // replacement in a doubles double-faint isn't delayed by the
-            // battleCloseMs stamp of the first.
+            // battleCloseMs stamp of the first. freshWait is what lets a
+            // button-chosen menu reopen right after a cancel instead of
+            // waiting out the stale-snapshot guard.
             battlePanel = state.battleSub == 1 ? 1 : 2;
         } else if (battleSendOutWait() && (battlePanel == 1 || battlePanel == 3)) {
             // A stale bag panel must never sit on a send-out wait: with
