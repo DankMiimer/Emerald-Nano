@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Pokémon Emerald Nano
+Comment=Native RG Nano port with companion panel
+Exec=run.sh
+Icon=pokemon-emerald-nano
+Categories=games
+Terminal=false
+StartupNotify=true

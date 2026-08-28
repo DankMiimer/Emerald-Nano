@@ -181,7 +181,13 @@ void DisableInterrupts(u16 mask)
 
 static void UpdateRegDispstatIntrBits(u16 regIE)
 {
-    u16 oldValue = GetGpuReg(REG_OFFSET_DISPSTAT) & (DISPSTAT_HBLANK_INTR | DISPSTAT_VBLANK_INTR);
+    // Merge into the *pending* buffered value, not GetGpuReg(REG_OFFSET_DISPSTAT):
+    // that one special-cases DISPSTAT to read the live register, which during
+    // boot is still zero while the value EnableVCountIntrAtLine150 staged sits
+    // unflushed in this buffer until the first V-blank. Reading the live
+    // register here therefore threw that value away again.
+    u16 pending = GPU_REG_BUF(REG_OFFSET_DISPSTAT);
+    u16 oldValue = pending & (DISPSTAT_HBLANK_INTR | DISPSTAT_VBLANK_INTR);
     u16 newValue = 0;
 
     if (regIE & INTR_FLAG_VBLANK)
@@ -191,5 +197,14 @@ static void UpdateRegDispstatIntrBits(u16 regIE)
         newValue |= DISPSTAT_HBLANK_INTR;
 
     if (oldValue != newValue)
-        SetGpuReg(REG_OFFSET_DISPSTAT, newValue);
+    {
+        // Only the two bits this function owns may change. Writing newValue as
+        // the whole register also cleared the V-count compare line (bits 8-15)
+        // and DISPSTAT_VCOUNT_INTR, which EnableVCountIntrAtLine150 sets once at
+        // boot -- so the first HBlank toggle from a scanline effect killed the
+        // V-count interrupt for the rest of the run. That interrupt is what
+        // calls m4aSoundVSync, so it silenced all audio permanently.
+        SetGpuReg(REG_OFFSET_DISPSTAT,
+                  (pending & ~(DISPSTAT_HBLANK_INTR | DISPSTAT_VBLANK_INTR)) | newValue);
+    }
 }

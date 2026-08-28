@@ -136,13 +136,8 @@ void AgbMain(void)
     AGBPrintInit();
 #endif
 #endif
-    static int sAgbFrames = 0;
     for (;;)
     {
-        sAgbFrames++;
-        if (sAgbFrames % 300 == 0) {
-            printf("[AgbMain] frame %d\n", sAgbFrames);
-        }
         ReadKeys();
 
         if (gSoftResetDisabled == FALSE

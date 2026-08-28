@@ -37,6 +37,9 @@ struct scanlineData {
     uint16_t spriteLayers[4][MAX_RENDER_WIDTH];
     uint16_t bgcnts[4];
     uint16_t winMask[MAX_RENDER_WIDTH];
+    // Set when a sprite pixel is actually written at that priority, so the
+    // compositor can skip the priorities that have nothing on this scanline.
+    bool spriteAtPriority[4];
     //priority bookkeeping
     char bgtoprio[4]; //background to priority
     char prioritySortedBgs[4][4];
@@ -56,7 +59,12 @@ static const uint16_t bgMapSizes[][2] =
     {64, 64},
 };
 
-static void RenderBGScanline(int bgNum, uint16_t control, uint16_t hoffs, uint16_t voffs, int lineNum, uint16_t *line)
+// `line` is restrict-qualified deliberately. The build uses -fno-strict-aliasing,
+// so without it the compiler must assume each store into the layer buffer might
+// have modified VRAM or the palette, and reloads the tile bytes and palette
+// entries on every pixel. The layer buffer is a scanline-local array that never
+// overlaps either, and telling the compiler so is worth ~2x in this loop.
+static void RenderBGScanline(int bgNum, uint16_t control, uint16_t hoffs, uint16_t voffs, int lineNum, uint16_t *restrict line)
 {
     unsigned int charBaseBlock = (control >> 2) & 3;
     unsigned int screenBaseBlock = (control >> 8) & 0x1F;
@@ -74,6 +82,158 @@ static void RenderBGScanline(int bgNum, uint16_t control, uint16_t hoffs, uint16
 
     hoffs &= 0x1FF;
     voffs &= 0x1FF;
+
+    // Everything derived from the scanline's y coordinate is constant across
+    // the whole row, but was being recomputed for every one of the 240 pixels
+    // -- including the screen-base pointer itself. Hoisting it leaves only
+    // genuinely per-pixel work in the loop below.
+    uint16_t *bgmapRow = (uint16_t *)BG_SCREEN_ADDR(screenBaseBlock);
+    unsigned int yy = (lineNum + voffs) & 0x1FF;
+    if (yy > 255 && mapHeightInPixels > 256) {
+        //the width check is for 512x512 mode support, it jumps by two screen bases instead
+        bgmapRow += (mapWidthInPixels > 256) ? 0x800 : 0x400;
+    }
+    yy &= 0xFF;
+    unsigned int mapRowOffset = (yy / 8) * 32;
+    unsigned int tileYBase = yy % 8;
+
+    // Fast path. Without mosaic, xx advances in lockstep with the loop counter,
+    // so a run of up to 8 pixels shares one tilemap entry. The map lookup, flip
+    // decode, tile address and palette base were all being redone for each of
+    // the 240 pixels; doing them once per span is where the time goes. Both the
+    // 0x1FF wrap and the 256px screen-base step land on tile boundaries, so
+    // nothing inside a span can cross either. Mosaic breaks the monotonicity of
+    // xx, so it keeps the original per-pixel loop below.
+    if (!(control & BGCNT_MOSAIC))
+    {
+        // Loop-invariant: whether the margin columns need clipping at all.
+        const bool clipMargins = (mapWidthInPixels < (unsigned int)gRenderWidth);
+        int i = 0;
+
+        while (i < gRenderWidth)
+        {
+            int x = i - gRenderMargin;
+            unsigned int xx = (x + hoffs) & 0x1FF;
+            uint16_t *bgmap = bgmapRow;
+            unsigned int tileX0;
+            unsigned int tileY;
+            uint16_t entry;
+            const uint8_t *tileRow;
+            const uint16_t *palRow;
+            bool flipX;
+            int span;
+            int k;
+
+            if (xx > 255 && mapWidthInPixels > 256)
+                bgmap += 0x400;
+            xx &= 0xFF;
+
+            tileX0 = xx & 7;
+            span = 8 - (int)tileX0;
+            if (span > gRenderWidth - i)
+                span = gRenderWidth - i;
+
+            entry = bgmap[mapRowOffset + (xx >> 3)];
+            tileY = tileYBase;
+            if (entry & (1 << 11))
+                tileY = 7 - tileY;
+            flipX = (entry & (1 << 10)) != 0;
+            tileRow = bgtiles + (entry & 0x3FF) * (bitsPerPixel * 8) + tileY * bitsPerPixel;
+            palRow = (bitsPerPixel == 4) ? pal + 16 * ((entry >> 12) & 0xF) : pal;
+
+            // Hot case: 4bpp, unflipped, no margin clipping. Two 4bpp pixels
+            // share one byte, so stepping them in pairs halves the tile-data
+            // loads and drops the per-pixel odd/even branch. This is where
+            // dense scenes spend their time -- there every pixel is opaque and
+            // actually stored, which is why they cost 2.2x a sparse one.
+            if (bitsPerPixel == 4 && !flipX && !clipMargins && span == 8 && tileX0 == 0)
+            {
+                // Whole-tile case, which is every span but the first on a
+                // scanline. tileRow is always 4-byte aligned (tiles are 32
+                // bytes, rows 4), so the eight 4bpp pixels are one 32-bit load
+                // and eight nibble extracts -- no per-pixel reload hazard.
+                uint32_t row = *(const uint32_t *)tileRow;
+                uint16_t *restrict out = line + i;
+
+                for (k = 0; k < 8; k++)
+                {
+                    unsigned int pixel = (row >> (k * 4)) & 0xF;
+                    if (pixel != 0)
+                        out[k] = palRow[pixel] | 0x8000;
+                }
+            }
+            else if (bitsPerPixel == 4 && !flipX && !clipMargins)
+            {
+                unsigned int tileX = tileX0;
+                uint16_t *restrict out = line + i;
+
+                k = 0;
+                if ((tileX & 1) && k < span)
+                {
+                    uint8_t pixel = tileRow[tileX >> 1] >> 4;
+                    if (pixel != 0)
+                        out[k] = palRow[pixel] | 0x8000;
+                    k++;
+                    tileX++;
+                }
+                for (; k + 1 < span; k += 2, tileX += 2)
+                {
+                    uint8_t byte = tileRow[tileX >> 1];
+                    uint8_t low = byte & 0xF;
+                    uint8_t high = byte >> 4;
+
+                    if (low != 0)
+                        out[k] = palRow[low] | 0x8000;
+                    if (high != 0)
+                        out[k + 1] = palRow[high] | 0x8000;
+                }
+                if (k < span)
+                {
+                    uint8_t byte = tileRow[tileX >> 1];
+                    uint8_t pixel = (tileX & 1) ? (byte >> 4) : (byte & 0xF);
+                    if (pixel != 0)
+                        out[k] = palRow[pixel] | 0x8000;
+                }
+            }
+            else
+            for (k = 0; k < span; k++)
+            {
+                int xi = i + k;
+                unsigned int tileX = tileX0 + (unsigned int)k;
+                uint8_t pixel;
+
+                // Same margin rule as the per-pixel path below.
+                if (clipMargins)
+                {
+                    int xg = xi - gRenderMargin;
+                    if (xg < 0 || xg >= DISPLAY_WIDTH)
+                        continue;
+                }
+
+                if (flipX)
+                    tileX = 7 - tileX;
+
+                if (bitsPerPixel == 4)
+                {
+                    pixel = tileRow[tileX >> 1];
+                    if (tileX & 1)
+                        pixel >>= 4;
+                    else
+                        pixel &= 0xF;
+
+                    if (pixel != 0)
+                        line[xi] = palRow[pixel] | 0x8000;
+                }
+                else
+                {
+                    line[xi] = palRow[tileRow[tileX]] | 0x8000;
+                }
+            }
+
+            i += span;
+        }
+        return;
+    }
 
     for (int i = 0; i < gRenderWidth; i++)
     {
@@ -94,39 +254,30 @@ static void RenderBGScanline(int bgNum, uint16_t control, uint16_t hoffs, uint16
         if (mapWidthInPixels < gRenderWidth && (x < 0 || x >= DISPLAY_WIDTH))
             continue;
 
-        uint16_t *bgmap = (uint16_t *)BG_SCREEN_ADDR(screenBaseBlock);
         // adjust for scroll
         unsigned int xx;
         if (control & BGCNT_MOSAIC)
             xx = (applyBGHorizontalMosaicEffect(x) + hoffs) & 0x1FF;
         else
             xx = (x + hoffs) & 0x1FF;
-        
-        unsigned int yy = (lineNum + voffs) & 0x1FF;
-        
-        //if x or y go above 255 pixels it goes to the next screen base which are 0x400 WORDs long
+
+        uint16_t *bgmap = bgmapRow;
+
+        //if x goes above 255 pixels it goes to the next screen base which are 0x400 WORDs long
         if (xx > 255 && mapWidthInPixels > 256) {
             bgmap += 0x400;
         }
-        
-        if (yy > 255 && mapHeightInPixels > 256) {
-            //the width check is for 512x512 mode support, it jumps by two screen bases instead
-            bgmap += (mapWidthInPixels > 256) ? 0x800 : 0x400;
-        }
-        
+
         //maximum width for bgtile block is 256
         xx &= 0xFF;
-        yy &= 0xFF;
 
-        unsigned int mapX = xx / 8;
-        unsigned int mapY = yy / 8;
-        uint16_t entry = bgmap[mapY * 32 + mapX];
+        uint16_t entry = bgmap[mapRowOffset + xx / 8];
 
         unsigned int tileNum = entry & 0x3FF;
         unsigned int paletteNum = (entry >> 12) & 0xF;
-        
+
         unsigned int tileX = xx % 8;
-        unsigned int tileY = yy % 8;
+        unsigned int tileY = tileYBase;
 
         // Flip if necessary
         if (entry & (1 << 10))
@@ -436,7 +587,10 @@ static bool alphaBlendSelectTargetB(struct scanlineData* scanline, uint16_t* col
     for (unsigned int blndprnum = prnum; blndprnum <= 3; blndprnum++)
     {
         //check if sprite is available to blend with, if sprite blending is enabled
-        if (spriteBlendEnabled == true && getAlphaBit(scanline->spriteLayers[blndprnum][pixelpos]) == 1)
+        // spriteAtPriority must be checked first: rows with no sprites on this
+        // scanline are no longer cleared, so their contents are stale.
+        if (spriteBlendEnabled == true && scanline->spriteAtPriority[blndprnum]
+         && getAlphaBit(scanline->spriteLayers[blndprnum][pixelpos]) == 1)
         {
             *colorOutput = scanline->spriteLayers[blndprnum][pixelpos];
             return true;
@@ -721,6 +875,7 @@ static void DrawSprites(struct scanlineData* scanline, uint16_t vcount, bool win
                         
                         //write pixel to pixel framebuffer
                         pixels[buf_x] = color | (1 << 15);
+                        scanline->spriteAtPriority[oam->priority] = true;
                     }
                 }
             }
@@ -728,8 +883,38 @@ static void DrawSprites(struct scanlineData* scanline, uint16_t vcount, bool win
     }
 }
 
-static void DrawScanline(uint16_t *pixels, uint16_t vcount)
+#ifdef RG_NANO_PROFILE_PPU
+#include <time.h>
+int64_t gPpuProfileBg;
+int64_t gPpuProfileClear;
+int64_t gPpuProfileWin;
+int64_t gPpuProfileObj;
+int64_t gPpuProfileComposite;
+unsigned int gPpuTextBgCalls;
+unsigned int gPpuAffineBgCalls;
+static int64_t PpuProfileNow(void)
 {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (int64_t)now.tv_sec * 1000000000LL + now.tv_nsec;
+}
+#define PPU_PROFILE_MARK(var) ((var) = PpuProfileNow())
+#define PPU_PROFILE_ADD(acc, from, to) ((acc) += (to) - (from))
+#define PPU_PROFILE_COUNT(counter) ((counter)++)
+#else
+#define PPU_PROFILE_MARK(var) ((void)0)
+#define PPU_PROFILE_ADD(acc, from, to) ((void)0)
+#define PPU_PROFILE_COUNT(counter) ((void)0)
+#endif
+
+// pixels is restrict for the same reason as RenderBGScanline's line: with
+// -fno-strict-aliasing the compositor would otherwise reload the layer buffers
+// and palette after every store into the output scanline.
+static void DrawScanline(uint16_t *restrict pixels, uint16_t vcount)
+{
+#ifdef RG_NANO_PROFILE_PPU
+    int64_t profileStart, profileClearEnd, profileBgEnd, profileWinEnd, profileObjEnd, profileEnd;
+#endif
     unsigned int mode = REG_DISPCNT & 3;
     unsigned char numOfBgs = (mode == 0 ? 4 : 3);
     int bgnum, prnum;
@@ -738,11 +923,27 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
     unsigned int xpos;
 
 
-    //initialize all priority bookkeeping data
-    memset(scanline.layers, 0, sizeof(scanline.layers));
-    memset(scanline.winMask, 0, sizeof(scanline.winMask));
-    memset(scanline.spriteLayers, 0, sizeof(scanline.spriteLayers));
+    PPU_PROFILE_MARK(profileStart);
+    //initialize all priority bookkeeping data. Only the first gRenderWidth
+    //columns are ever read, and the arrays are MAX_RENDER_WIDTH wide to leave
+    //room for the widescreen margins, so clearing them in full every scanline
+    //just burns memory bandwidth.
+    {
+        size_t usedRow = (size_t)gRenderWidth * sizeof(uint16_t);
+        int layer;
+        // winMask needs no clear: when windows are active every column is
+        // written below, and when they are not it is never read. Clearing the
+        // sprite rows lazily in DrawSprites was tried and measured worse -- it
+        // moved the same blanking into the sprite path and cost more there.
+        for (layer = 0; layer < 4; layer++)
+        {
+            memset(scanline.layers[layer], 0, usedRow);
+            memset(scanline.spriteLayers[layer], 0, usedRow);
+        }
+        memset(scanline.spriteAtPriority, 0, sizeof(scanline.spriteAtPriority));
+    }
     memset(scanline.prioritySortedBgsCount, 0, sizeof(scanline.prioritySortedBgsCount));
+    PPU_PROFILE_MARK(profileClearEnd);
 
     for (bgnum = 0; bgnum < numOfBgs; bgnum++)
     {
@@ -767,6 +968,7 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
                 uint16_t bghoffs = *(uint16_t *)(REG_ADDR_BG0HOFS + bgnum * 4);
                 uint16_t bgvoffs = *(uint16_t *)(REG_ADDR_BG0VOFS + bgnum * 4);
                 
+                PPU_PROFILE_COUNT(gPpuTextBgCalls);
                 RenderBGScanline(bgnum, scanline.bgcnts[bgnum], bghoffs, bgvoffs, vcount, scanline.layers[bgnum]);
             }
         }
@@ -777,6 +979,7 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
         bgnum = 2;
         if (isbgEnabled(bgnum))
         {
+            PPU_PROFILE_COUNT(gPpuAffineBgCalls);
             RenderRotScaleBGScanline(bgnum, scanline.bgcnts[bgnum], REG_BG2X, REG_BG2Y, vcount, scanline.layers[bgnum]);
         }
         // BG0 and BG1 are text mode
@@ -787,6 +990,7 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
                 uint16_t bghoffs = *(uint16_t *)(REG_ADDR_BG0HOFS + bgnum * 4);
                 uint16_t bgvoffs = *(uint16_t *)(REG_ADDR_BG0VOFS + bgnum * 4);
                 
+                PPU_PROFILE_COUNT(gPpuTextBgCalls);
                 RenderBGScanline(bgnum, scanline.bgcnts[bgnum], bghoffs, bgvoffs, vcount, scanline.layers[bgnum]);
             }
         }
@@ -795,7 +999,8 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
         DBGPRINTF("Video mode %u is unsupported.\n", mode);
         break;
     }
-    
+    PPU_PROFILE_MARK(profileBgEnd);
+
     bool windowsEnabled = false;
     uint16_t WIN0bottom, WIN0top, WIN0right, WIN0left;
     uint16_t WIN1bottom, WIN1top, WIN1right, WIN1left;
@@ -868,6 +1073,13 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
     //draw to pixel mask
     if (windowsEnabled)
     {
+        // REG_WININ/REG_WINOUT are volatile I/O reads, so leaving them in the
+        // loop body forced up to three reloads per pixel, 240 times a scanline,
+        // for values that cannot change mid-scanline.
+        const uint16_t maskWin0 = REG_WININ & 0x3F;
+        const uint16_t maskWin1 = (REG_WININ >> 8) & 0x3F;
+        const uint16_t maskOut = (REG_WINOUT & 0x3F) | WINMASK_WINOUT;
+
         for (xpos = 0; xpos < gRenderWidth; xpos++)
         {
             // Window bounds are register values in GBA screen space, so test
@@ -875,17 +1087,19 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
             int gx = xpos - gRenderMargin;
             //win0 checks
             if (WIN0enable && winCheckHorizontalBounds(WIN0left, WIN0right, gx))
-                scanline.winMask[xpos] = REG_WININ & 0x3F;
+                scanline.winMask[xpos] = maskWin0;
             //win1 checks
             else if (WIN1enable && winCheckHorizontalBounds(WIN1left, WIN1right, gx))
-                scanline.winMask[xpos] = (REG_WININ >> 8) & 0x3F;
+                scanline.winMask[xpos] = maskWin1;
             else
-                scanline.winMask[xpos] = (REG_WINOUT & 0x3F) | WINMASK_WINOUT;
+                scanline.winMask[xpos] = maskOut;
         }
     }
 
+    PPU_PROFILE_MARK(profileWinEnd);
     if (REG_DISPCNT & DISPCNT_OBJ_ON)
         DrawSprites(&scanline, vcount, windowsEnabled);
+    PPU_PROFILE_MARK(profileObjEnd);
 
     //iterate trough every priority in order
     for (prnum = 3; prnum >= 0; prnum--)
@@ -946,6 +1160,8 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
         }
         //draw sprites on current priority
         uint16_t *src = scanline.spriteLayers[prnum];
+        if (!scanline.spriteAtPriority[prnum])
+            continue; // nothing drew here this scanline; skip 240 alpha tests
         for (xpos = 0; xpos < gRenderWidth; xpos++)
         {
             if (getAlphaBit(src[xpos]))
@@ -958,6 +1174,12 @@ static void DrawScanline(uint16_t *pixels, uint16_t vcount)
             }
         }
     }
+    PPU_PROFILE_MARK(profileEnd);
+    PPU_PROFILE_ADD(gPpuProfileClear, profileStart, profileClearEnd);
+    PPU_PROFILE_ADD(gPpuProfileBg, profileClearEnd, profileBgEnd);
+    PPU_PROFILE_ADD(gPpuProfileWin, profileBgEnd, profileWinEnd);
+    PPU_PROFILE_ADD(gPpuProfileObj, profileWinEnd, profileObjEnd);
+    PPU_PROFILE_ADD(gPpuProfileComposite, profileObjEnd, profileEnd);
 }
 
 uint16_t *memsetu16(uint16_t *dst, uint16_t fill, size_t count)
@@ -967,6 +1189,15 @@ uint16_t *memsetu16(uint16_t *dst, uint16_t fill, size_t count)
         *dst++ = fill;
     }
 }
+
+// Diagnostic: how often the V-count interrupt (which drives m4aSoundVSync, and
+// therefore all audio) actually fires. Reported on the [Audio] log line.
+unsigned int gVCountIntrFires;
+
+// When set, DrawFrame runs a full scanline pass for timing and interrupts but
+// produces no pixels. Used to hold exact 60Hz game and audio timing on frames
+// the CPU cannot also draw in budget.
+bool gSkipPixelRender;
 
 void DrawFrame(uint16_t *pixels)
 {
@@ -983,28 +1214,38 @@ void DrawFrame(uint16_t *pixels)
 #else
             if (REG_DISPSTAT & DISPSTAT_VCOUNT_INTR)
 #endif
-                    gIntrTable[0]();
-        }
-
-        // Render the backdrop color before the each individual scanline.
-        // backdrop color brightness effects
-        unsigned int blendMode = (REG_BLDCNT >> 6) & 3;
-        uint16_t backdropColor = *(uint16_t *)PLTT;
-        if (REG_BLDCNT & BLDCNT_TGT1_BD)
-        {
-            switch (blendMode)
             {
-            case 2:
-                backdropColor = alphaBrightnessIncrease(backdropColor);
-                break;
-            case 3:
-                backdropColor = alphaBrightnessDecrease(backdropColor);
-                break;
+                    gVCountIntrFires++;
+                    gIntrTable[0]();
             }
         }
 
-        memsetu16(&pixels[i * gRenderWidth], backdropColor, gRenderWidth);
-        DrawScanline(&pixels[i * gRenderWidth], i);
+        // Only the pixel production is optional. Everything else in this loop --
+        // REG_VCOUNT, the V-count interrupt (which drives m4aSoundVSync and so
+        // all audio), the H-blank DMAs and the H-blank interrupt -- runs exactly
+        // as it always does, so a skipped frame is invisible to game timing.
+        if (!gSkipPixelRender)
+        {
+            // Render the backdrop color before the each individual scanline.
+            // backdrop color brightness effects
+            unsigned int blendMode = (REG_BLDCNT >> 6) & 3;
+            uint16_t backdropColor = *(uint16_t *)PLTT;
+            if (REG_BLDCNT & BLDCNT_TGT1_BD)
+            {
+                switch (blendMode)
+                {
+                case 2:
+                    backdropColor = alphaBrightnessIncrease(backdropColor);
+                    break;
+                case 3:
+                    backdropColor = alphaBrightnessDecrease(backdropColor);
+                    break;
+                }
+            }
+
+            memsetu16(&pixels[i * gRenderWidth], backdropColor, gRenderWidth);
+            DrawScanline(&pixels[i * gRenderWidth], i);
+        }
         
         REG_DISPSTAT |= INTR_FLAG_HBLANK;
 

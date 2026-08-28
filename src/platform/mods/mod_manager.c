@@ -416,5 +416,11 @@ const struct Trainer *ModManager_GetTrainer(u16 trainerId) { return &gTrainers[t
 bool8 ModManager_GetTrainerFrontPicOverride(u16 trainerPicId, void *destBuffer) { return FALSE; }
 u16 ModManager_GetStarterSpecies(u8 slot, u16 vanillaSpecies) { return vanillaSpecies; }
 u8 ModManager_GetStarterLevel(u8 slot, u8 vanillaLevel) { return vanillaLevel; }
+const struct MapHeader *ModManager_GetMapHeaderByMap(u16 mapGroup, u16 mapNum, const struct MapHeader *vanilla) { return vanilla; }
+
+// The randomizer/challenges menu belongs to the desktop mod UI. The only
+// remaining call site is guarded by gActiveModSelector, which is always NULL
+// in this no-mod build, but the symbol must still exist for the static link.
+void CB2_InitTxRandomizerChallengesMenu(void) {}
 
 #endif

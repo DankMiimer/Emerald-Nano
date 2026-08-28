@@ -503,6 +503,14 @@ static u8 CopySaveSlotData(u16 sectorId, struct SaveSectorLocation *locations)
         if (id == 0)
             gLastWrittenSector = i;
 
+        // TryLoadSaveSlot calls this even when the slot is empty or corrupt, so
+        // id comes straight off the flash and reads 0xFFFF on erased flash. On
+        // hardware locations[0xFFFF] is a harmless out-of-bounds read that the
+        // signature check below discards; with a real MMU it segfaults. Such a
+        // sector could never pass the signature check anyway, so skip it.
+        if (id >= NUM_SECTORS_PER_SLOT)
+            continue;
+
         checksum = CalculateChecksum(gReadWriteSector->data, locations[id].size);
 
         // Only copy data for sectors whose signature and checksum fields are correct
@@ -532,7 +540,8 @@ static u8 GetSaveValidStatus(const struct SaveSectorLocation *locations)
     for (i = 0; i < NUM_SECTORS_PER_SLOT; i++)
     {
         ReadFlashSector(i, gReadWriteSector);
-        if (gReadWriteSector->signature == SECTOR_SIGNATURE)
+        if (gReadWriteSector->signature == SECTOR_SIGNATURE
+         && gReadWriteSector->id < NUM_SECTORS_PER_SLOT) // see CopySaveSlotData
         {
             signatureValid = TRUE;
             checksum = CalculateChecksum(gReadWriteSector->data, locations[gReadWriteSector->id].size);
@@ -564,7 +573,8 @@ static u8 GetSaveValidStatus(const struct SaveSectorLocation *locations)
     for (i = 0; i < NUM_SECTORS_PER_SLOT; i++)
     {
         ReadFlashSector(i + NUM_SECTORS_PER_SLOT, gReadWriteSector);
-        if (gReadWriteSector->signature == SECTOR_SIGNATURE)
+        if (gReadWriteSector->signature == SECTOR_SIGNATURE
+         && gReadWriteSector->id < NUM_SECTORS_PER_SLOT) // see CopySaveSlotData
         {
             signatureValid = TRUE;
             checksum = CalculateChecksum(gReadWriteSector->data, locations[gReadWriteSector->id].size);

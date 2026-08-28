@@ -48,3 +48,13 @@ prefabs.json
 /pokeemerald_modern-*.png
 /pc-border-template-1280x720.png
 /pokeemerald.cfg
+
+# RG Nano port
+# Build artefacts. dist/dev/ in particular holds a development OPK with the
+# game data compiled in, so it must never be committed.
+dist/
+# GBA BIOS image and save backups are the user's own files, not project source.
+gba_bios.bin
+save_backups/
+__pycache__/
+*.pyc

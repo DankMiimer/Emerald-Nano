@@ -1,0 +1,245 @@
+SHELL := /bin/bash
+.SHELLFLAGS := -o pipefail -c
+.DEFAULT_GOAL := all
+
+CROSS_COMPILE ?= arm-funkey-linux-musleabihf-
+TARGET_CC ?= $(CROSS_COMPILE)gcc
+TARGET_AS ?= $(CROSS_COMPILE)as
+TARGET_LD ?= $(CROSS_COMPILE)ld
+TARGET_OBJCOPY ?= $(CROSS_COMPILE)objcopy
+TARGET_READELF ?= $(CROSS_COMPILE)readelf
+TARGET_STRIP ?= $(CROSS_COMPILE)strip
+HOST_CPP ?= cpp
+
+BUILD_DIR ?= build/rg-nano
+GENERATED_DIR := $(BUILD_DIR)/generated
+OBJECT_DIR := $(BUILD_DIR)/obj
+ELF := $(BUILD_DIR)/pokemon-emerald-nano
+DEBUG_ELF := $(BUILD_DIR)/pokemon-emerald-nano.debug
+MAP := $(BUILD_DIR)/pokemon-emerald-nano.map
+PREPROC := tools/preproc/preproc
+SCANINC := tools/scaninc/scaninc
+GFX := tools/gbagfx/gbagfx
+AIF := tools/aif2pcm/aif2pcm
+MAPJSON := tools/mapjson/mapjson
+MID := tools/mid2agb/mid2agb
+SPECIAL_IDS := $(GENERATED_DIR)/special_ids.inc
+GAME_DATA_OBJECT := $(GENERATED_DIR)/game_data.o
+
+SYSROOT := $(shell $(TARGET_CC) --print-sysroot 2>/dev/null)
+SDL_CFLAGS ?= -I$(SYSROOT)/usr/include/SDL -D_GNU_SOURCE=1 -D_REENTRANT
+SDL_LIBS ?= -lSDL -lpthread -lm -ldl
+
+# PLATFORM_SDL2 is also defined for the engine sources because the upstream
+# dual-screen battle hooks use that feature guard. The two SDL2-only platform
+# implementations are excluded from RG_NANO_C_SRCS below.
+# Set PROFILE_PPU=1 to break the software PPU's per-scanline cost down into
+# bg/window/sprite/composite in the [PPU] log line.
+PROFILE_PPU ?= 0
+PLATFORM_DEFINES := -DPORTABLE -DNONMATCHING -DPLATFORM_SDL2 -DPLATFORM_RG_NANO \
+                    -DRENDERER_EASY_DRAW -DMODERN=1 -DUBFIX
+ifeq ($(PROFILE_PPU),1)
+PLATFORM_DEFINES += -DRG_NANO_PROFILE_PPU
+endif
+CPPFLAGS := -std=gnu99 -iquote include -iquote gflib -I. $(SDL_CFLAGS) $(PLATFORM_DEFINES)
+# The V3s is a single-core Cortex-A7 with NEON. Without -mcpu the toolchain
+# builds for its generic armv7-a default and leaves the auto-vectoriser aimed at
+# plain VFP, which matters because the software PPU is the frame budget.
+# -ffast-math is deliberately NOT used: the audio mixer relies on NaN checks.
+TARGET_ARCH_FLAGS ?= -mcpu=cortex-a7 -mtune=cortex-a7 -mfpu=neon-vfpv4
+CFLAGS := -std=gnu99 -O3 -g $(TARGET_ARCH_FLAGS) -fno-builtin -fno-pie -fno-strict-aliasing \
+          -ffunction-sections -fdata-sections -Wno-implicit-function-declaration \
+          -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-unused-function
+ASFLAGS := -march=armv7-a --defsym MODERN=1 --defsym PORTABLE=1 --defsym UBFIX=1
+LDFLAGS := -no-pie -Wl,--build-id=sha1 -Wl,-Map,$(MAP)
+
+ALL_C_SRCS := $(shell find src -type f -name '*.c' ! -name '*.inc.c' | sort)
+RG_NANO_C_SRCS := $(filter-out \
+    src/platform/sdl2.c \
+    src/platform/win32.c \
+    src/platform/dualscreen_bridge.c \
+    src/platform/gba_fast_draw.c \
+    src/platform/mods/% \
+    src/platform/voxel/%,$(ALL_C_SRCS))
+RG_NANO_C_SRCS += src/platform/mods/mod_manager.c
+RG_NANO_C_OBJS := $(patsubst %.c,$(OBJECT_DIR)/%.o,$(RG_NANO_C_SRCS))
+RG_NANO_C_DEPS := $(patsubst %.c,$(OBJECT_DIR)/%.d,$(RG_NANO_C_SRCS))
+
+DATA_ASM_SRCS := $(wildcard data/*.s)
+
+# Most of the soundtrack ships as MIDI, not assembly: sound/songs holds ~110
+# hand-written .s files while the other 420 songs (every mus_*, most se_*, and
+# all the ph_* contest phonemes) are compiled from sound/songs/midi/*.mid by
+# mid2agb. Deriving the song list from the .mid files rather than a wildcard
+# over generated .s keeps a clean tree building correctly.
+MID_SUBDIR := sound/songs/midi
+MID_CFG := $(MID_SUBDIR)/midi.cfg
+MID_SRCS := $(wildcard $(MID_SUBDIR)/*.mid)
+MID_ASM_SRCS := $(patsubst %.mid,%.s,$(MID_SRCS))
+STATIC_SONG_SRCS := $(wildcard sound/songs/*.s)
+SONG_ASM_SRCS := $(STATIC_SONG_SRCS) $(MID_ASM_SRCS)
+DATA_ASM_OBJS := $(patsubst %.s,$(GENERATED_DIR)/%.s.o,$(DATA_ASM_SRCS))
+SONG_ASM_OBJS := $(patsubst %.s,$(GENERATED_DIR)/%.s.o,$(SONG_ASM_SRCS))
+DATA_ASM_DEPS := $(patsubst %.s,$(GENERATED_DIR)/%.s.d,$(DATA_ASM_SRCS))
+# Generated song assembly only pulls in the static MPlayDef.s, so it is left
+# out of the scaninc dependency scan.
+SONG_ASM_DEPS := $(patsubst %.s,$(GENERATED_DIR)/%.s.d,$(STATIC_SONG_SRCS))
+MAP_JSONS := $(wildcard data/maps/*/map.json)
+MAP_STAMPS := $(patsubst data/maps/%/map.json,$(GENERATED_DIR)/map-stamps/%.stamp,$(MAP_JSONS))
+
+# The decompilation keeps PNG/AIF sources and generates the exact binary
+# blobs referenced by INCBIN at build time. scaninc makes those assets normal
+# prerequisites of the native objects, while the upstream conversion rules
+# preserve byte-for-byte compatibility with the ROM.
+include graphics_file_rules.mk
+include spritesheet_rules.mk
+
+%.1bpp: %.png
+	$(GFX) $< $@
+
+%.4bpp: %.png
+	$(GFX) $< $@
+
+%.8bpp: %.png
+	$(GFX) $< $@
+
+%.gbapal: %.pal
+	$(GFX) $< $@
+
+%.gbapal: %.png
+	$(GFX) $< $@
+
+%.lz: %
+	$(GFX) $< $@
+
+%.rl: %
+	$(GFX) $< $@
+
+sound/direct_sound_samples/cries/%.bin: sound/direct_sound_samples/cries/%.aif
+	$(AIF) $< $@ --compress
+
+sound/%.bin: sound/%.aif
+	$(AIF) $< $@
+
+.PHONY: all prepare clean debug package print-config
+.SECONDARY:
+.DELETE_ON_ERROR:
+
+all: $(ELF) debug
+
+prepare: $(PREPROC)
+	$(MAKE) -f make_tools.mk
+	$(MAKE) generated
+
+$(PREPROC):
+	$(MAKE) -C tools/preproc
+
+$(SCANINC) $(GFX) $(AIF) $(MAPJSON) $(MID):
+	$(MAKE) -f make_tools.mk
+
+$(GENERATED_DIR)/map-stamps/%.stamp: data/maps/%/map.json $(MAPJSON)
+	@mkdir -p $(dir $@)
+	$(MAPJSON) map emerald $< data/layouts/layouts.json data/maps/$*
+	@touch $@
+
+$(SPECIAL_IDS): data/specials.inc
+	@mkdir -p $(dir $@)
+	@awk '/^[[:space:]]+def_special[[:space:]]/ { printf ".set SPECIAL_%s, %d\n", $$2, id++ }' $< > $@
+
+$(OBJECT_DIR)/%.d: %.c $(SCANINC)
+	@mkdir -p $(dir $@)
+	$(SCANINC) -M $@ -I include -I tools/agbcc/include $<
+
+$(GENERATED_DIR)/%.s.d: %.s $(SCANINC)
+	@mkdir -p $(dir $@)
+	$(SCANINC) -M $@ -I include -I "" $<
+
+ifeq (,$(filter clean print-config,$(MAKECMDGOALS)))
+-include $(RG_NANO_C_DEPS) $(DATA_ASM_DEPS) $(SONG_ASM_DEPS)
+endif
+
+$(OBJECT_DIR)/%.o: %.c $(PREPROC)
+	@mkdir -p $(dir $@)
+	$(TARGET_CC) $(CPPFLAGS) -E $< | \
+		$(PREPROC) -i $< charmap.txt | \
+		$(TARGET_CC) $(CFLAGS) -x cpp-output -c - -o $@
+
+# GCC 10's ARM back end can emit an out-of-range VFP literal load for this
+# unusually large translation unit at -O3. -O2 generates equivalent portable
+# code without triggering that assembler bug.
+$(OBJECT_DIR)/src/easy_chat.o: CFLAGS := $(filter-out -O3,$(CFLAGS)) -O2
+
+$(GENERATED_DIR)/data/%.s.o: data/%.s $(PREPROC) $(SPECIAL_IDS)
+	@mkdir -p $(dir $@)
+	@{ printf '.include "$(abspath $(SPECIAL_IDS))"\n'; \
+	   $(PREPROC) $< charmap.txt | $(HOST_CPP) -Iinclude $(PLATFORM_DEFINES) | \
+	   $(PREPROC) -ie $< charmap.txt; } | \
+	   sed -e 's/\.4byte/\.word/g;s/\.2byte/\.short/g' > $@.s
+	$(TARGET_AS) $(ASFLAGS) -I. -Isound -o $@ $@.s
+
+$(GENERATED_DIR)/data/maps.s.o $(GENERATED_DIR)/data/map_events.s.o: $(MAP_STAMPS)
+
+$(GENERATED_DIR)/sound/songs/%.s.o: sound/songs/%.s
+	@mkdir -p $(dir $@)
+	sed -e 's/\.4byte/\.word/g;s/\.2byte/\.short/g' $< > $@.s
+	$(TARGET_AS) $(ASFLAGS) -I. -Isound -o $@ $@.s
+
+# Each midi.cfg line names a .mid and the mid2agb options that song needs, so
+# turn every line into its own rule. Same trick as audio_rules.mk, kept inline
+# because that file also defines .bin and object rules that would collide with
+# the ones above.
+define MID_RULE
+$(MID_SUBDIR)/$1.s: $(MID_SUBDIR)/$1.mid $(MID_CFG) $(MID)
+	$(MID) $$< $$@ $2
+endef
+define MID_EXPANSION
+$(eval $(call MID_RULE,$(basename $(patsubst %:,%,$(word 1,$1))),$(wordlist 2,999,$1)))
+endef
+$(foreach line,$(shell sed 's/ /__SPACE__/g' $(MID_CFG)),\
+    $(call MID_EXPANSION,$(subst __SPACE__, ,$(line))))
+
+# A .mid with no midi.cfg entry would otherwise link as an undefined song.
+$(MID_SUBDIR)/%.s: $(MID_SUBDIR)/%.mid
+	$(error $< has no entry in $(MID_CFG); it cannot be built)
+
+# Do NOT rename .rodata here. objcopy renames the section but not its
+# companion .rel.rodata, which it then cannot match up and silently discards
+# -- that dropped all 12656 game-data relocations, so every pointer in the
+# blob linked as NULL (gMPlayTable[i].info == 0 segfaulted m4aSoundInit on
+# device). Only the section flags need to change, and --set-section-flags
+# leaves the name, and therefore the relocations, intact.
+$(GAME_DATA_OBJECT): $(DATA_ASM_OBJS) $(SONG_ASM_OBJS)
+	@mkdir -p $(dir $@)
+	$(TARGET_LD) -r -o $@.tmp $^
+	$(TARGET_OBJCOPY) --set-section-flags .rodata=alloc,load,data,contents $@.tmp $@
+	@before=$$($(TARGET_READELF) -r $@.tmp | grep -c '^[0-9a-f]\{8\} '); \
+	 after=$$($(TARGET_READELF) -r $@ | grep -c '^[0-9a-f]\{8\} '); \
+	 if [ "$$before" != "$$after" ]; then \
+	     echo "$@: objcopy dropped relocations ($$before -> $$after)" >&2; \
+	     exit 1; \
+	 fi; \
+	 echo "$@: $$after relocations preserved"
+
+$(RG_NANO_C_OBJS) $(DATA_ASM_OBJS) $(SONG_ASM_OBJS): | prepare
+
+$(ELF): $(RG_NANO_C_OBJS) $(GAME_DATA_OBJECT)
+	@mkdir -p $(dir $@)
+	$(TARGET_CC) $(CFLAGS) $(LDFLAGS) -o $@ $(RG_NANO_C_OBJS) $(GAME_DATA_OBJECT) $(SDL_LIBS)
+
+debug: $(ELF)
+	$(TARGET_OBJCOPY) --only-keep-debug $(ELF) $(DEBUG_ELF)
+
+package: all
+	CROSS_COMPILE=$(CROSS_COMPILE) scripts/package_rg_nano.sh
+
+print-config:
+	@echo TARGET_CC=$(TARGET_CC)
+	@echo SYSROOT=$(SYSROOT)
+	@echo SDL_CFLAGS=$(SDL_CFLAGS)
+	@echo SDL_LIBS=$(SDL_LIBS)
+	@echo C_SOURCES=$(words $(RG_NANO_C_SRCS))
+	@echo DATA_OBJECTS=$(words $(DATA_ASM_OBJS))
+	@echo SONG_OBJECTS=$(words $(SONG_ASM_OBJS))
+
+clean:
+	rm -rf $(BUILD_DIR)
