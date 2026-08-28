@@ -1,6 +1,6 @@
 # Pokémon Emerald — RG Nano native port: handoff
 
-Status as of **2026-08-28**. Branch `rg-nano-port`. This picks up from the
+Status as of **2026-08-29**. Branch `rg-nano-port`. This picks up from the
 ChatGPT/Codex session that wrote the port; that session ran out of budget before
 it ever ran the binary on hardware, so everything below the "What was already
 here" line was found by actually booting it on the device.
@@ -10,9 +10,13 @@ timing, has working controls, sound, saves, and the companion panel switching
 context with what is happening in-game. Battles work with the stock top-screen
 UI plus a mirrored action/move grid on the lower panel.
 
-Still open: the release (ROM-gated) build has never been produced or tested —
-everything so far is `DEVELOPMENT_BUILD=1` — and one unreproduced crash on
-entering a battle. See [Open issues](#open-issues).
+Still open: one unreproduced crash on entering a battle. See
+[Open issues](#open-issues).
+
+Since then, an experiment landed that fills the whole 240x240 panel with the
+game instead of the 240x160 + companion panel layout — see
+[the fullscreen240 experiment](#experiment-filling-the-whole-240x240-panel).
+It is behind a build flag and does not affect the normal build.
 
 ---
 
@@ -21,13 +25,14 @@ entering a battle. See [Open issues](#open-issues).
 | Thing | Value |
 |---|---|
 | Device | RG Nano at `192.168.1.222`, root/`funkey`, key auth |
-| Frontend actually running | **`retrofe`** (not gmenu2x, despite `../CLAUDE.md`) |
+| Frontend actually running | **`gmenu2x`** (confirmed by `ps` on device 2026-08-29) |
 | OPK on device | `/mnt/Native games/PokemonEmeraldNano_funkey-s.opk` |
 | Writable data dir | `/mnt/FunKey/.pokemon-emerald-nano/` (`pokeemerald.sav`, `last.log`, `prev.log`) |
 | SDK | `~/funkey-sdk-2.3.0` inside WSL Ubuntu |
 | Build | `make -f Makefile_rg_nano` |
+| Fullscreen experiment | `experiments/fullscreen240/build.sh` (RG_NANO_FULLSCREEN=1) |
 | Package | `DEVELOPMENT_BUILD=1 scripts/package_rg_nano.sh` |
-| Current build type | **development** (no asset manifest, no ROM needed at runtime) |
+| Build type on device | **release** (ROM-gated; runs with `--asset-manifest /opk/asset_manifest.bin`) |
 
 Build + deploy + capture a screenshot, all in one (scripts live in the scratchpad
 of the session that made them; recreate as needed):
@@ -320,6 +325,18 @@ A real GBA frame is 228 scanlines x 1232 cycles at 16.777216 MHz = **59.7275 Hz
 / 16.7427 ms**, not 60 Hz / 16.6667 ms; pacing to the latter counted frames late
 that hardware would have made. `RG_NANO_FRAME_NS` is the authentic value.
 
+**The renderer costs 0.357 us per rendered pixel, and that is linear.** Measured
+across four frame sizes from 120x120 to 240x240 and it held to under 1% every
+time, including twice where the number was predicted before it was measured. Two
+things follow, and they are worth knowing before designing anything that changes
+how much gets drawn:
+
+- a 16.74 ms frame buys about **39,000 rendered pixels**; the stock 240x160
+  frame is 38,400, which is why it sits exactly on the edge;
+- cost tracks *pixels*, not scanlines, layers or sprites, so the cheapest way to
+  buy frame time is to render a smaller area — not to micro-optimise the inner
+  loops. See the failed blank-tile experiment below.
+
 The renderer went from 17.8 ms to ~13.7 ms per frame:
 
 | change | effect |
@@ -476,6 +493,71 @@ Worth folding into `run.sh` at some point.
   at times.
 
 ---
+
+## Experiment: filling the whole 240x240 panel
+
+`experiments/fullscreen240/`, behind `RG_NANO_FULLSCREEN=1`. Full write-up with
+every measurement is in that directory's README; this is what a future agent
+needs to know without reading it.
+
+**What it does.** Renders the field across the whole panel instead of a 240x160
+game area plus the 240x80 companion panel, by rendering extra scanlines outside
+the GBA viewport — the vertical twin of the existing `gRenderWidth` /
+`gRenderMargin` widescreen support. Two modes, both confirmed on hardware:
+
+| mode | source | fps |
+|---|---|---|
+| 2x zoom (default) | 120x120 magnified 2x | **60**, same 0.8% skip rate as stock |
+| 1:1 (Y toggles) | 240x208, letterboxed 16px | 48 |
+
+**Two hard caps, both measured, both worth not rediscovering:**
+
+1. **24 rows of margin, not 40.** `RedrawMapSliceNorth`/`South`
+   (`src/field_camera.c`) rewrite one metatile row of the 256px-tall BG tilemap
+   every time the camera crosses a 16px boundary. The retail 240x160 view hides
+   that strip in its 40px/56px of slack. Drawing the full 240 rows put the view
+   on top of both strips, and it showed on hardware as tiles *and* NPCs blinking
+   in the outermost two tile rows at each edge — 16px, exactly one metatile row.
+   Anything that extends the view vertically has this ceiling until the BG map
+   is made 64 tiles tall, which is 4 screenblocks x 3 layers of VRAM.
+2. **~39,000 rendered pixels for 60fps** (see the frame budget section above).
+   240x240 at 1:1 is 57,600, so it cannot reach 60 without restructuring
+   `RenderBGScanline` around its memory access. That was investigated and
+   deliberately not taken on.
+
+**Things that were tried and did not work**, so they are not retried:
+
+- *Widening the object load window* to stop NPCs popping at the edges. There are
+  only `OBJECT_EVENTS_COUNT` = **16 object slots for the whole map**, and
+  upstream's widescreen `extraX` had already stretched the window from 17x17 to
+  27x17 metatiles. Adding 6 rows each way took it to 27x29 and made NPCs pop
+  *everywhere*, including edges that had been fine. The load window is not free.
+  An `[Objects] peak_active=N/16` counter is in the verbose log for this.
+- *Skipping wholly transparent 4bpp tile rows* in `RenderBGScanline`, expecting a
+  frame-rate win because BG0 is blank across most field scanlines. Measured under
+  1%: the cost is the two scattered tile fetches (~95 ns each, a DRAM miss),
+  not the arithmetic after them, and you cannot skip a fetch you need in order to
+  learn the row is blank. The change was kept — it is byte-identical and free —
+  but it is **unguarded**, so it is in the stock build too. It is the only part
+  of the experiment that is.
+- *1.25x and 1.5x zoom.* Both hit 60fps comfortably, both were cut: they are
+  non-integer scales, so they double some pixels and not others, and the owner's
+  verdict on this panel was that they look bad. 2x is the only magnification
+  with uniform pixels.
+
+**One trap that will bite anything reading start-menu state:** `gMenuCallback`
+is set when the start menu opens and **never cleared** when it closes — the task
+is destroyed but the pointer keeps its stale value for the rest of the process.
+Use `GetStartMenuWindowId() != WINDOW_NONE` or `ArePlayerFieldControlsLocked()`,
+both of which the game clears itself.
+
+**Build note.** `experiments/fullscreen240/build.sh` shares `build/rg-nano` with
+the stock build, so after running it the ELF there is the experiment's; rebuild
+without the flag to get the stock one back. `make` cannot see the define change,
+so the script touches every affected source first — add to that list if you add
+another. The experiment has its own OPK, its own menu entry, and its own data
+dir (`/mnt/FunKey/.pokemon-emerald-fs240`, seeded from a copy of the real save),
+so it cannot disturb the normal install.
 
 ## Build-system traps
 
