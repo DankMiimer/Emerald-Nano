@@ -18,6 +18,7 @@
 #include "task.h"
 #include "text_window.h"
 #include "window.h"
+#include "experiments/fullscreen240/fullscreen240.h"
 #include "constants/songs.h"
 
 #define DLG_WINDOW_PALETTE_NUM 15
@@ -106,6 +107,22 @@ static const struct WindowTemplate sYesNo_WindowTemplates =
     .baseBlock = 0x125
 };
 
+// The field yes/no box is positioned to sit directly on top of the dialogue
+// box, so it has to move with it. Returns the stock template unchanged when the
+// fullscreen240 experiment is off or not built.
+static const struct WindowTemplate *FullscreenShiftedYesNoTemplate(void)
+{
+#if RG_NANO_FULLSCREEN
+    static struct WindowTemplate shifted;
+
+    shifted = sYesNo_WindowTemplates;
+    shifted.tilemapTop += Fullscreen240_TextBoxShiftRows();
+    return &shifted;
+#else
+    return &sYesNo_WindowTemplates;
+#endif
+}
+
 static const u16 sHofPC_TopBar_Pal[] = INCBIN_U16("graphics/interface/hof_pc_topbar.gbapal");
 static const u8 sTextColors[] = { TEXT_DYNAMIC_COLOR_6, TEXT_COLOR_WHITE, TEXT_COLOR_DARK_GRAY };
 
@@ -140,9 +157,38 @@ static const struct MenuInfoIcon sMenuInfoIcons[] =
     [MENU_INFO_ICON_BALL_BLUE] = {  8,  8, 0xAF }, // For placed decorations in player's room
 };
 
+#if RG_NANO_FULLSCREEN
+// experiments/fullscreen240. The dialogue box sits at tile rows 14..19 (game y
+// 112..160): the bottom of the GBA viewport, but the middle of the widened
+// 240x240 frame. Pushing it down by the bottom margin puts it back on the
+// bottom edge of the screen, with map either side of it instead of above only.
+//
+// Only the field's windows move. Every other caller of
+// InitStandardTextBoxWindows -- the naming screen, hall of fame, the minigames
+// -- draws into a 240x160 frame where a shifted box would hang off the bottom,
+// so they go through the unshifted path.
+static bool8 sTextBoxForField;
+
+void InitStandardTextBoxWindowsForField(void)
+{
+    sTextBoxForField = TRUE;
+    InitStandardTextBoxWindows();
+    sTextBoxForField = FALSE;
+}
+#endif
+
 void InitStandardTextBoxWindows(void)
 {
+#if RG_NANO_FULLSCREEN
+    struct WindowTemplate templates[ARRAY_COUNT(sStandardTextBox_WindowTemplates)];
+
+    memcpy(templates, sStandardTextBox_WindowTemplates, sizeof(templates));
+    if (sTextBoxForField)
+        templates[0].tilemapTop += Fullscreen240_TextBoxShiftRows();
+    InitWindows(templates);
+#else
     InitWindows(sStandardTextBox_WindowTemplates);
+#endif
     sStartMenuWindowId = WINDOW_NONE;
     sMapNamePopupWindowId = WINDOW_NONE;
 }
@@ -463,12 +509,12 @@ void DisplayItemMessageOnField(u8 taskId, const u8 *string, TaskFunc callback)
 
 void DisplayYesNoMenuDefaultYes(void)
 {
-    CreateYesNoMenu(&sYesNo_WindowTemplates, STD_WINDOW_BASE_TILE_NUM, STD_WINDOW_PALETTE_NUM, 0);
+    CreateYesNoMenu(FullscreenShiftedYesNoTemplate(), STD_WINDOW_BASE_TILE_NUM, STD_WINDOW_PALETTE_NUM, 0);
 }
 
 void DisplayYesNoMenuWithDefault(u8 initialCursorPos)
 {
-    CreateYesNoMenu(&sYesNo_WindowTemplates, STD_WINDOW_BASE_TILE_NUM, STD_WINDOW_PALETTE_NUM, initialCursorPos);
+    CreateYesNoMenu(FullscreenShiftedYesNoTemplate(), STD_WINDOW_BASE_TILE_NUM, STD_WINDOW_PALETTE_NUM, initialCursorPos);
 }
 
 u32 GetPlayerTextSpeed(void)

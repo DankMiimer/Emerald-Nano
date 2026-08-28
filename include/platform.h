@@ -26,6 +26,23 @@
 extern int gRenderWidth;
 extern int gRenderMargin;
 
+// --- experiment: experiments/fullscreen240 -------------------------------
+// Vertical twin of the widescreen margins above. The RG Nano panel is 240x240
+// and the GBA viewport is 240x160, so the whole screen can be filled at 1:1 by
+// rendering extra scanlines above and below the viewport instead of scaling
+// anything. Buffer row 0 holds game-space row -gRenderTopMargin.
+#if RG_NANO_FULLSCREEN
+#define MAX_RENDER_HEIGHT 240
+extern int gRenderHeight;       // rows actually rendered (DISPLAY_HEIGHT..240)
+extern int gRenderTopMargin;    // rows rendered above game-space row 0
+extern int gRenderBottomMargin; // rows rendered below game-space row 159
+#else
+#define MAX_RENDER_HEIGHT   DISPLAY_HEIGHT
+#define gRenderHeight       DISPLAY_HEIGHT
+#define gRenderTopMargin    0
+#define gRenderBottomMargin 0
+#endif
+
 void Platform_StoreSaveFile(void);
 void Platform_ReadFlash(u16 sectorNum, u32 offset, u8 *dest, u32 size);
 void Platform_QueueAudio(float *audioBuffer, s32 samplesPerFrame);

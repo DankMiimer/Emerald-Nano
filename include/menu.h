@@ -44,6 +44,13 @@ extern const u16 gStandardMenuPalette[];
 
 void FreeAllOverworldWindowBuffers(void);
 void InitStandardTextBoxWindows(void);
+#if RG_NANO_FULLSCREEN
+// experiments/fullscreen240: the field's copy of the standard text box windows,
+// which is the only one allowed to move down into the widened frame.
+void InitStandardTextBoxWindowsForField(void);
+#else
+#define InitStandardTextBoxWindowsForField InitStandardTextBoxWindows
+#endif
 void InitTextBoxGfxAndPrinters(void);
 u16 RunTextPrintersAndIsPrinter0Active(void);
 void LoadMessageBoxAndBorderGfx(void);

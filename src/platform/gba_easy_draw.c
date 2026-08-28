@@ -32,6 +32,14 @@ extern void (*const gIntrTable[])(void);
 int gRenderWidth = DISPLAY_WIDTH;
 int gRenderMargin = 0;
 
+#if RG_NANO_FULLSCREEN
+// See include/platform.h. Set once per frame from the platform layer while the
+// game thread is parked, never mid-frame.
+int gRenderHeight = DISPLAY_HEIGHT;
+int gRenderTopMargin = 0;
+int gRenderBottomMargin = 0;
+#endif
+
 struct scanlineData {
     uint16_t layers[4][MAX_RENDER_WIDTH];
     uint16_t spriteLayers[4][MAX_RENDER_WIDTH];
@@ -155,11 +163,20 @@ static void RenderBGScanline(int bgNum, uint16_t control, uint16_t hoffs, uint16
                 uint32_t row = *(const uint32_t *)tileRow;
                 uint16_t *restrict out = line + i;
 
-                for (k = 0; k < 8; k++)
+                // A wholly transparent tile row writes nothing, so the eight
+                // nibble extracts and eight branches below are pure waste --
+                // and they are the common case, not a corner one. BG0 carries
+                // only text and is blank across almost every field scanline,
+                // and the overworld's upper map layers are mostly blank too.
+                // One compare against a value already loaded skips all of it.
+                if (row != 0)
                 {
-                    unsigned int pixel = (row >> (k * 4)) & 0xF;
-                    if (pixel != 0)
-                        out[k] = palRow[pixel] | 0x8000;
+                    for (k = 0; k < 8; k++)
+                    {
+                        unsigned int pixel = (row >> (k * 4)) & 0xF;
+                        if (pixel != 0)
+                            out[k] = palRow[pixel] | 0x8000;
+                    }
                 }
             }
             else if (bitsPerPixel == 4 && !flipX && !clipMargins)
@@ -647,6 +664,30 @@ static int winExtendRight(u16 right)
     return (sWinExtendMargins && right >= DISPLAY_WIDTH) ? DISPLAY_WIDTH + gRenderMargin : (int)right;
 }
 
+#if RG_NANO_FULLSCREEN
+// The vertical twin of winExtendLeft/Right. WIN0V = 0x00A0 is the overworld's
+// way of saying "the whole screen"; without this the extra scanlines fall
+// outside every window and get masked to WINOUT, which blanks the margins.
+static int winExtendTop(u16 top)
+{
+    return (sWinExtendMargins && top == 0) ? -gRenderTopMargin : (int)top;
+}
+
+static int winExtendBottom(u16 bottom)
+{
+    return (sWinExtendMargins && bottom >= DISPLAY_HEIGHT)
+         ? DISPLAY_HEIGHT + gRenderBottomMargin : (int)bottom;
+}
+
+static bool winCheckVerticalBounds(u16 top, u16 bottom, int vcount)
+{
+    if (top > bottom)
+        return (vcount >= (int)top || vcount < (int)bottom);
+    else
+        return (vcount >= winExtendTop(top) && vcount < winExtendBottom(bottom));
+}
+#endif
+
 static bool winCheckHorizontalBounds(u16 left, u16 right, int xpos)
 {
     if (left > right)
@@ -656,7 +697,7 @@ static bool winCheckHorizontalBounds(u16 left, u16 right, int xpos)
 }
 
 // Parts of this code heavily borrowed from NanoboyAdvance.
-static void DrawSprites(struct scanlineData* scanline, uint16_t vcount, bool windowsEnabled)
+static void DrawSprites(struct scanlineData* scanline, int vcount, bool windowsEnabled)
 {
     int i;
     unsigned int x;
@@ -729,8 +770,17 @@ static void DrawSprites(struct scanlineData* scanline, uint16_t vcount, bool win
         // the left (max sprite width is 64, margin at most 24).
         if (x >= 512 - 128)
             x -= 512;
+#if RG_NANO_FULLSCREEN
+        // Same reasoning as the x wrap above, applied vertically: with rows
+        // rendered below the viewport, y in [160, 192) is genuinely on screen
+        // rather than a sprite entering from the top, so only wrap values too
+        // large to reach the frame from below (max sprite height is 64).
+        if (y >= 256 - 64)
+            y -= 256;
+#else
         if (y >= DISPLAY_HEIGHT)
             y -= 256;
+#endif
 
         if (isAffine)
         {
@@ -910,7 +960,7 @@ static int64_t PpuProfileNow(void)
 // pixels is restrict for the same reason as RenderBGScanline's line: with
 // -fno-strict-aliasing the compositor would otherwise reload the layer buffers
 // and palette after every store into the output scanline.
-static void DrawScanline(uint16_t *restrict pixels, uint16_t vcount)
+static void DrawScanline(uint16_t *restrict pixels, int vcount)
 {
 #ifdef RG_NANO_PROFILE_PPU
     int64_t profileStart, profileClearEnd, profileBgEnd, profileWinEnd, profileObjEnd, profileEnd;
@@ -1008,53 +1058,6 @@ static void DrawScanline(uint16_t *restrict pixels, uint16_t vcount)
     WIN0enable = false;
     WIN1enable = false;
 
-    //figure out if WIN0 masks on this scanline
-    if (REG_DISPCNT & DISPCNT_WIN0_ON)
-    {
-        //acquire the window coordinates
-        WIN0bottom = (REG_WIN0V & 0xFF); //y2;
-        WIN0top = (REG_WIN0V & 0xFF00) >> 8; //y1;
-        WIN0right = (REG_WIN0H & 0xFF); //x2
-        WIN0left = (REG_WIN0H & 0xFF00) >> 8; //x1
-        
-        //figure out WIN Y wraparound and check bounds accordingly
-        if (WIN0top > WIN0bottom) {
-            if (vcount >= WIN0top || vcount < WIN0bottom)
-                WIN0enable = true;
-        } else {
-            if (vcount >= WIN0top && vcount < WIN0bottom)
-                WIN0enable = true;
-        }
-        
-        windowsEnabled = true;
-    }
-    //figure out if WIN1 masks on this scanline
-    if (REG_DISPCNT & DISPCNT_WIN1_ON)
-    {
-        // Read WIN1's own registers -- this used WIN0's, which made WIN1 a
-        // silent duplicate of WIN0 instead of the empty window the overworld
-        // configures (WIN1H = 0xFFFF).
-        WIN1bottom = (REG_WIN1V & 0xFF); //y2;
-        WIN1top = (REG_WIN1V & 0xFF00) >> 8; //y1;
-        WIN1right = (REG_WIN1H & 0xFF); //x2
-        WIN1left = (REG_WIN1H & 0xFF00) >> 8; //x1
-        
-        if (WIN1top > WIN1bottom) {
-            if (vcount >= WIN1top || vcount < WIN1bottom)
-                WIN1enable = true;
-        } else {
-            if (vcount >= WIN1top && vcount < WIN1bottom)
-                WIN1enable = true;
-        }
-        
-        windowsEnabled = true;
-    }
-    //enable windows if OBJwin is enabled
-    if (REG_DISPCNT & DISPCNT_OBJWIN_ON && REG_DISPCNT & DISPCNT_OBJ_ON)
-    {
-        windowsEnabled = true;
-    }
-    
     // Extend screen-edge window bounds across the margins only when some
     // enabled text BG is 512px wide (screen size 1 or 3) and can actually
     // fill them -- the widened overworld. Otherwise keep GBA bounds so
@@ -1070,6 +1073,61 @@ static void DrawScanline(uint16_t *restrict pixels, uint16_t vcount)
         }
     }
 
+    //figure out if WIN0 masks on this scanline
+    if (REG_DISPCNT & DISPCNT_WIN0_ON)
+    {
+        //acquire the window coordinates
+        WIN0bottom = (REG_WIN0V & 0xFF); //y2;
+        WIN0top = (REG_WIN0V & 0xFF00) >> 8; //y1;
+        WIN0right = (REG_WIN0H & 0xFF); //x2
+        WIN0left = (REG_WIN0H & 0xFF00) >> 8; //x1
+        
+        //figure out WIN Y wraparound and check bounds accordingly
+#if RG_NANO_FULLSCREEN
+        WIN0enable = winCheckVerticalBounds(WIN0top, WIN0bottom, vcount);
+#else
+        if (WIN0top > WIN0bottom) {
+            if (vcount >= WIN0top || vcount < WIN0bottom)
+                WIN0enable = true;
+        } else {
+            if (vcount >= WIN0top && vcount < WIN0bottom)
+                WIN0enable = true;
+        }
+#endif
+        
+        windowsEnabled = true;
+    }
+    //figure out if WIN1 masks on this scanline
+    if (REG_DISPCNT & DISPCNT_WIN1_ON)
+    {
+        // Read WIN1's own registers -- this used WIN0's, which made WIN1 a
+        // silent duplicate of WIN0 instead of the empty window the overworld
+        // configures (WIN1H = 0xFFFF).
+        WIN1bottom = (REG_WIN1V & 0xFF); //y2;
+        WIN1top = (REG_WIN1V & 0xFF00) >> 8; //y1;
+        WIN1right = (REG_WIN1H & 0xFF); //x2
+        WIN1left = (REG_WIN1H & 0xFF00) >> 8; //x1
+        
+#if RG_NANO_FULLSCREEN
+        WIN1enable = winCheckVerticalBounds(WIN1top, WIN1bottom, vcount);
+#else
+        if (WIN1top > WIN1bottom) {
+            if (vcount >= WIN1top || vcount < WIN1bottom)
+                WIN1enable = true;
+        } else {
+            if (vcount >= WIN1top && vcount < WIN1bottom)
+                WIN1enable = true;
+        }
+#endif
+        
+        windowsEnabled = true;
+    }
+    //enable windows if OBJwin is enabled
+    if (REG_DISPCNT & DISPCNT_OBJWIN_ON && REG_DISPCNT & DISPCNT_OBJ_ON)
+    {
+        windowsEnabled = true;
+    }
+    
     //draw to pixel mask
     if (windowsEnabled)
     {
@@ -1199,10 +1257,60 @@ unsigned int gVCountIntrFires;
 // the CPU cannot also draw in budget.
 bool gSkipPixelRender;
 
+// One rendered row, backdrop first. `line` is a game-space scanline number and
+// may sit outside [0, DISPLAY_HEIGHT) when vertical margins are active; buffer
+// row 0 is game-space row -gRenderTopMargin.
+static void DrawFrameScanline(uint16_t *pixels, int line)
+{
+    unsigned int blendMode = (REG_BLDCNT >> 6) & 3;
+    uint16_t backdropColor = *(uint16_t *)PLTT;
+    uint16_t *row;
+
+    if (REG_BLDCNT & BLDCNT_TGT1_BD)
+    {
+        switch (blendMode)
+        {
+        case 2:
+            backdropColor = alphaBrightnessIncrease(backdropColor);
+            break;
+        case 3:
+            backdropColor = alphaBrightnessDecrease(backdropColor);
+            break;
+        }
+    }
+
+#if RG_NANO_FULLSCREEN
+    // A negative margin crops: the outermost viewport rows then fall outside
+    // the frame and must not be drawn at all, or they would write before the
+    // start of the buffer.
+    int bufferRow = line + gRenderTopMargin;
+
+    if (bufferRow < 0 || bufferRow >= gRenderHeight)
+        return;
+    row = &pixels[bufferRow * gRenderWidth];
+#else
+    row = &pixels[(line + gRenderTopMargin) * gRenderWidth];
+#endif
+    memsetu16(row, backdropColor, gRenderWidth);
+    DrawScanline(row, line);
+}
+
 void DrawFrame(uint16_t *pixels)
 {
     int i;
     int j;
+#if RG_NANO_FULLSCREEN
+    // The margin rows sit outside the GBA's scanline timing, so they get no
+    // REG_VCOUNT, no H-blank DMA and no H-blank interrupt of their own -- doing
+    // any of that would change game timing, which is the one thing this must
+    // not do. They are drawn from the register state that brackets the real
+    // frame instead: the top rows before scanline 0, the bottom rows after
+    // scanline 159. Anything driven per-scanline by an H-blank DMA therefore
+    // reads flat across the margins.
+    if (!gSkipPixelRender)
+        for (i = -gRenderTopMargin; i < 0; i++)
+            DrawFrameScanline(pixels, i);
+#endif
     for (i = 0; i < DISPLAY_HEIGHT; i++)
     {
         REG_VCOUNT = i;
@@ -1225,27 +1333,7 @@ void DrawFrame(uint16_t *pixels)
         // all audio), the H-blank DMAs and the H-blank interrupt -- runs exactly
         // as it always does, so a skipped frame is invisible to game timing.
         if (!gSkipPixelRender)
-        {
-            // Render the backdrop color before the each individual scanline.
-            // backdrop color brightness effects
-            unsigned int blendMode = (REG_BLDCNT >> 6) & 3;
-            uint16_t backdropColor = *(uint16_t *)PLTT;
-            if (REG_BLDCNT & BLDCNT_TGT1_BD)
-            {
-                switch (blendMode)
-                {
-                case 2:
-                    backdropColor = alphaBrightnessIncrease(backdropColor);
-                    break;
-                case 3:
-                    backdropColor = alphaBrightnessDecrease(backdropColor);
-                    break;
-                }
-            }
-
-            memsetu16(&pixels[i * gRenderWidth], backdropColor, gRenderWidth);
-            DrawScanline(&pixels[i * gRenderWidth], i);
-        }
+            DrawFrameScanline(pixels, i);
         
         REG_DISPSTAT |= INTR_FLAG_HBLANK;
 
@@ -1257,5 +1345,10 @@ void DrawFrame(uint16_t *pixels)
         REG_DISPSTAT &= ~INTR_FLAG_HBLANK;
         REG_DISPSTAT &= ~INTR_FLAG_VCOUNT;
     }
+#if RG_NANO_FULLSCREEN
+    if (!gSkipPixelRender)
+        for (i = DISPLAY_HEIGHT; i < DISPLAY_HEIGHT + gRenderBottomMargin; i++)
+            DrawFrameScanline(pixels, i);
+#endif
 }
 #endif

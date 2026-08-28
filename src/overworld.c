@@ -1433,7 +1433,7 @@ static void InitOverworldBgs(void)
     SetBgTilemapBuffer(1, gOverworldTilemapBuffer_Bg1);
     SetBgTilemapBuffer(2, gOverworldTilemapBuffer_Bg2);
     SetBgTilemapBuffer(3, gOverworldTilemapBuffer_Bg3);
-    InitStandardTextBoxWindows();
+    InitStandardTextBoxWindowsForField();
 }
 
 void CleanupOverworldWindowsAndTilemaps(void)

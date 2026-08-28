@@ -32,6 +32,7 @@
 #include "mods/mod_manager.h"
 #include "platform/rg_nano_asset_gate.h"
 #include "platform/secondary_panel.h"
+#include "experiments/fullscreen240/fullscreen240.h"
 
 #define RG_NANO_DATA_DIR "/mnt/FunKey/.pokemon-emerald-nano"
 // A GBA frame is 228 scanlines x 1232 cycles = 280896 cycles at 16.777216 MHz,
@@ -52,7 +53,7 @@ static volatile sig_atomic_t sRunning = 1;
 static uint16_t sKeys;
 static bool sExitConfirmation;
 static bool sHeldGameFrame;
-static uint16_t sGbaImage[DISPLAY_WIDTH * DISPLAY_HEIGHT];
+static uint16_t sGbaImage[DISPLAY_WIDTH * MAX_RENDER_HEIGHT];
 static uint16_t sPanelCache[SECONDARY_PANEL_WIDTH * SECONDARY_PANEL_HEIGHT];
 static uint32_t sPanelRevision = UINT32_MAX;
 static char sDataDirectory[1024] = RG_NANO_DATA_DIR;
@@ -454,6 +455,22 @@ static void ProcessEvents(void)
                 }
                 continue;
             }
+#if RG_NANO_FULLSCREEN
+            // X toggles the widened frame, Y re-reads fullscreen240.cfg so the
+            // margins can be dialled in over SSH without a rebuild. Neither
+            // button is a GBA button (see KeyMask), so nothing is stolen from
+            // the game.
+            if (event.key.keysym.sym == SDLK_x)
+            {
+                Fullscreen240_Toggle();
+                continue;
+            }
+            if (event.key.keysym.sym == SDLK_y)
+            {
+                Fullscreen240_CycleZoom();
+                continue;
+            }
+#endif
             if (event.key.keysym.sym == SDLK_m)
             {
                 SecondaryPanel_CycleView(-1);
@@ -497,6 +514,50 @@ static int64_t MonotonicNs(void)
     return (int64_t)now.tv_sec * 1000000000LL + now.tv_nsec;
 }
 
+#if RG_NANO_FULLSCREEN
+// The rendered region is gRenderWidth x gRenderHeight of GBA screen space and
+// the panel is always 240x240, so the composition step magnifies. Both are
+// square and GBA pixels are square, so this is a uniform scale -- nothing is
+// stretched. Nearest neighbour, via two precomputed index tables so the inner
+// loop stays a load and a shift; rebuilt only when the source size changes,
+// which is a handful of frames per zoom.
+static uint16_t sScaleX[DISPLAY_WIDTH];
+static uint16_t sScaleY[MAX_RENDER_HEIGHT];
+static int sScaleSrcWidth;
+static int sScaleSrcHeight;
+
+static int sScaleDestHeight;
+
+static void UpdateScaleTables(int srcWidth, int srcHeight, int destHeight)
+{
+    int i;
+
+    if (srcWidth == sScaleSrcWidth && srcHeight == sScaleSrcHeight
+     && destHeight == sScaleDestHeight)
+        return;
+    for (i = 0; i < DISPLAY_WIDTH; i++)
+        sScaleX[i] = (uint16_t)(((2 * i + 1) * srcWidth) / (2 * DISPLAY_WIDTH));
+    for (i = 0; i < destHeight && i < MAX_RENDER_HEIGHT; i++)
+        sScaleY[i] = (uint16_t)(((2 * i + 1) * srcHeight) / (2 * destHeight));
+    sScaleSrcWidth = srcWidth;
+    sScaleSrcHeight = srcHeight;
+    sScaleDestHeight = destHeight;
+}
+
+// BGR555 -> RGB565 by arithmetic. The old 32768-entry lookup table was 64KB
+// against a 32KB L1, so a large share of lookups missed to main memory -- far
+// more expensive than the handful of shifts it replaced.
+static inline uint16_t ConvertPixel(unsigned int color)
+{
+    unsigned int red = color & 0x1F;
+    unsigned int green = (color >> 5) & 0x1F;
+    unsigned int blue = (color >> 10) & 0x1F;
+
+    // 5-bit green -> 6 bits, replicating the top bit like the old table.
+    return (uint16_t)((red << 11) | (((green << 1) | (green >> 4)) << 5) | blue);
+}
+#endif
+
 static void DrawComposedFrame(bool runGameVBlank)
 {
     const struct SecondaryPanelModel *model;
@@ -514,6 +575,13 @@ static void DrawComposedFrame(bool runGameVBlank)
     ppuEnd = drawStart;
     if (runGameVBlank)
     {
+#if RG_NANO_FULLSCREEN
+        // Must happen here and nowhere else: the game thread is parked in
+        // VBlankIntrWait for the whole of this function, so this is the only
+        // point where the render geometry can change without tearing a frame
+        // between two different heights.
+        Fullscreen240_Update();
+#endif
         if (!gSkipPixelRender)
             memset(sGbaImage, 0, sizeof(sGbaImage));
         DrawFrame(sGbaImage);
@@ -551,9 +619,52 @@ static void DrawComposedFrame(bool runGameVBlank)
     // Convert BGR555 -> RGB565 arithmetically. The old 32768-entry lookup table
     // was 64KB against a 32KB L1, so a large share of lookups missed to main
     // memory -- far more expensive than the handful of shifts it replaced.
-    for (y = 0; y < DISPLAY_HEIGHT; y++)
+#if RG_NANO_FULLSCREEN
+    if (Fullscreen240_Active())
     {
-        const uint16_t *restrict src = sGbaImage + y * DISPLAY_WIDTH;
+        // The 1:1 view is capped at 208 rows by the map buffer (see
+        // fullscreen240.c), so it is centred and letterboxed rather than
+        // stretched to 240 -- a 240/208 magnification is non-integer, and
+        // those were rejected on this panel.
+        int destHeight = Fullscreen240_DestHeight();
+        int destTop = (MAX_RENDER_HEIGHT - destHeight) / 2;
+
+        UpdateScaleTables(gRenderWidth, gRenderHeight, destHeight);
+        for (y = 0; y < destTop; y++)
+            memset(screenPixels + y * pitch, 0, DISPLAY_WIDTH * sizeof(uint16_t));
+        for (y = destTop + destHeight; y < MAX_RENDER_HEIGHT; y++)
+            memset(screenPixels + y * pitch, 0, DISPLAY_WIDTH * sizeof(uint16_t));
+
+        if (gRenderWidth == DISPLAY_WIDTH && gRenderHeight == destHeight)
+        {
+            // 1:1. Worth its own loop: this is the mode with the least frame
+            // budget to spare, so it does not pay for the index tables.
+            for (y = 0; y < destHeight; y++)
+            {
+                const uint16_t *restrict src = sGbaImage + y * DISPLAY_WIDTH;
+                uint16_t *restrict dst = screenPixels + (destTop + y) * pitch;
+
+                for (x = 0; x < DISPLAY_WIDTH; x++)
+                    dst[x] = ConvertPixel(src[x]);
+            }
+        }
+        else
+        {
+            for (y = 0; y < destHeight; y++)
+            {
+                const uint16_t *restrict src = sGbaImage + sScaleY[y] * gRenderWidth;
+                uint16_t *restrict dst = screenPixels + (destTop + y) * pitch;
+
+                for (x = 0; x < DISPLAY_WIDTH; x++)
+                    dst[x] = ConvertPixel(src[sScaleX[x]]);
+            }
+        }
+    }
+    else
+#endif
+    for (y = 0; y < gRenderHeight; y++)
+    {
+        const uint16_t *restrict src = sGbaImage + y * gRenderWidth;
         uint16_t *restrict dst = screenPixels + y * pitch;
 
         for (x = 0; x < DISPLAY_WIDTH; x++)
@@ -567,7 +678,14 @@ static void DrawComposedFrame(bool runGameVBlank)
             dst[x] = (uint16_t)((red << 11) | (((green << 1) | (green >> 4)) << 5) | blue);
         }
     }
-    if (!gSecondaryPanelDisabled)
+    // The widened frame reaches the bottom of the panel, so there is no room
+    // left for the companion panel and no blit to do. Dropping back to the
+    // stock frame repaints it from the cache on the very next frame, and both
+    // SDL pages are covered within two.
+    // The exit prompt is drawn by the companion panel, so the panel has to come
+    // back for it even when the experiment owns the whole screen -- otherwise
+    // MENU halts the game waiting for an A/B that the player cannot see.
+    if (!gSecondaryPanelDisabled && (!Fullscreen240_Active() || sExitConfirmation))
     {
         for (y = 0; y < SECONDARY_PANEL_HEIGHT; y++)
             memcpy(screenPixels + (DISPLAY_HEIGHT + y) * pitch,
@@ -642,6 +760,9 @@ int main(int argc, char **argv)
         if (gSecondaryPanelDisabled)
             fprintf(stderr, "[Panel] companion panel DISABLED (nopanel present)\n");
 
+#if RG_NANO_FULLSCREEN
+        Fullscreen240_Init(sDataDirectory);
+#endif
         snprintf(flagPath, sizeof(flagPath), "%s/debug", sDataDirectory);
         sVerboseLogging = (access(flagPath, F_OK) == 0);
         if (sVerboseLogging)
@@ -775,6 +896,15 @@ int main(int argc, char **argv)
             sProfileWork = 0;
             sProfileEvents = 0;
             sSkippedFrames = 0;
+#if RG_NANO_FULLSCREEN
+            {
+                extern u32 gExperimentObjectsPeak;
+
+                fprintf(stderr, "[Objects] peak_active=%u/%u\n",
+                        gExperimentObjectsPeak, OBJECT_EVENTS_COUNT);
+                gExperimentObjectsPeak = 0;
+            }
+#endif
             fprintf(stderr,
                     "[Audio] queue_calls=%u queued_samples=%llu ring=%u vcount_fires=%u dispstat=%04x ie=%04x\n",
                     sAudioQueueCalls, sAudioQueuedSamples, sAudioCount,

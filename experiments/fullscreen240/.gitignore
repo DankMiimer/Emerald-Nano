@@ -1,0 +1,8 @@
+# Build output and large binaries: reproducible with build.sh, not worth 50MB
+# of history.
+dist/
+*.elf
+
+# Raw framebuffer dumps from capture.sh. The PNGs next to them are the useful
+# artefact; the .raw is just the intermediate.
+shots/*.raw

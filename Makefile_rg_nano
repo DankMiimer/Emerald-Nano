@@ -41,6 +41,15 @@ PLATFORM_DEFINES := -DPORTABLE -DNONMATCHING -DPLATFORM_SDL2 -DPLATFORM_RG_NANO 
 ifeq ($(PROFILE_PPU),1)
 PLATFORM_DEFINES += -DRG_NANO_PROFILE_PPU
 endif
+# Set RG_NANO_FULLSCREEN=1 to build the experiments/fullscreen240 variant, which
+# fills the whole 240x240 panel with the field at 1:1 instead of a 240x160 game
+# area plus the companion panel. Off by default; the stock build is unchanged.
+# Build it with experiments/fullscreen240/build.sh, which also forces the
+# affected objects to recompile (make cannot see a define change).
+RG_NANO_FULLSCREEN ?= 0
+ifeq ($(RG_NANO_FULLSCREEN),1)
+PLATFORM_DEFINES += -DRG_NANO_FULLSCREEN=1
+endif
 CPPFLAGS := -std=gnu99 -iquote include -iquote gflib -I. $(SDL_CFLAGS) $(PLATFORM_DEFINES)
 # The V3s is a single-core Cortex-A7 with NEON. Without -mcpu the toolchain
 # builds for its generic armv7-a default and leaves the auto-vectoriser aimed at
@@ -62,6 +71,9 @@ RG_NANO_C_SRCS := $(filter-out \
     src/platform/mods/% \
     src/platform/voxel/%,$(ALL_C_SRCS))
 RG_NANO_C_SRCS += src/platform/mods/mod_manager.c
+ifeq ($(RG_NANO_FULLSCREEN),1)
+RG_NANO_C_SRCS += experiments/fullscreen240/fullscreen240.c
+endif
 RG_NANO_C_OBJS := $(patsubst %.c,$(OBJECT_DIR)/%.o,$(RG_NANO_C_SRCS))
 RG_NANO_C_DEPS := $(patsubst %.c,$(OBJECT_DIR)/%.d,$(RG_NANO_C_SRCS))
 

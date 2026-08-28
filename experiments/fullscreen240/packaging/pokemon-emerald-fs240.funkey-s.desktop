@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Emerald FS240 (test)
+Comment=Experiment: whole 240x240 screen at 1:1, no companion panel
+Exec=run.sh
+Icon=pokemon-emerald-fs240
+Categories=games
+Terminal=false
+StartupNotify=true

@@ -1647,6 +1647,41 @@ u8 CreateVirtualObject(u8 graphicsId, u8 virtualObjId, s16 x, s16 y, u8 elevatio
     return spriteId;
 }
 
+// High-water mark of object slots in use. There are only OBJECT_EVENTS_COUNT
+// (16) for the whole map, so widening the load window can trade pop-in at the
+// edges for pop-in everywhere -- which a too-generous first attempt at this may
+// well have done. Reported on the [Objects] log line so the trade is visible
+// rather than guessed at. Sampled inside TrySpawnObjectEvents, which only runs
+// when the camera moves, so it reads 0 while standing still.
+//
+// There is deliberately no "failed spawns" counter. TrySpawnObjectEventTemplate
+// returns OBJECT_EVENTS_COUNT both when the table is full and when the object is
+// simply already spawned -- GetAvailableObjectEventId cannot tell them apart --
+// so counting its failures produced tens of "failures" per second on a map with
+// four NPCs and 12 free slots. A number that cannot distinguish the thing you
+// are looking for from the normal case is worse than no number.
+u32 gExperimentObjectsPeak;
+
+// Metatiles of extra object-event loading ABOVE the retail window, and nothing
+// below it.
+//
+// The retail window is `top = pos.y`, which is the first map row the BG tilemap
+// holds -- zero slack. That is invisible on a 240x160 screen, but the widened
+// frame draws those rows, so an NPC up there sits exactly on the removal
+// boundary and is dropped and respawned (teleporting home) as the camera steps.
+//
+// This is deliberately the *minimum*: ceil(margin / 16) metatiles, which puts
+// the boundary just past the top of the drawn area and no further. An earlier
+// version added the same 3-metatile lead the horizontal check uses, and applied
+// it below as well -- that inflated the window from 17 rows to 29, so far more
+// templates competed for the 16 slots than could fit, and NPCs began popping
+// everywhere including the bottom edge where they never had before. More load
+// window is not more correct; it is a different bug.
+static s16 ExperimentVerticalObjectSlack(void)
+{
+    return gRenderTopMargin != 0 ? (gRenderTopMargin + 15) / 16 : 0;
+}
+
 void TrySpawnObjectEvents(s16 cameraX, s16 cameraY)
 {
     u8 i;
@@ -1659,9 +1694,17 @@ void TrySpawnObjectEvents(s16 cameraX, s16 cameraY)
         // coords this check tests. Load them well before the visible margin
         // so spawns and the teleport-home on respawn stay offscreen.
         s16 extraX = GetMapFillExtraX() ? 5 : 0;
+        // Vertically the retail window has NO slack at all: top is exactly
+        // pos.y, which is the first map row the BG tilemap holds. That is
+        // invisible on a 240x160 screen, but the fullscreen240 experiment
+        // draws those rows, so an NPC up there sat exactly on the spawn
+        // boundary and was removed and respawned as the camera stepped --
+        // the objects seen blinking along the top edge. Give the margins the
+        // same slack the horizontal ones get.
+        s16 extraY = ExperimentVerticalObjectSlack();
         s16 left = gSaveBlock1Ptr->pos.x - 2 - extraX;
         s16 right = gSaveBlock1Ptr->pos.x + MAP_OFFSET_W + 2 + extraX;
-        s16 top = gSaveBlock1Ptr->pos.y;
+        s16 top = gSaveBlock1Ptr->pos.y - extraY;
         s16 bottom = gSaveBlock1Ptr->pos.y + MAP_OFFSET_H + 2;
 
         if (CurrentBattlePyramidLocation() != PYRAMID_LOCATION_NONE)
@@ -1680,6 +1723,18 @@ void TrySpawnObjectEvents(s16 cameraX, s16 cameraY)
             if (top <= npcY && bottom >= npcY && left <= npcX && right >= npcX
                 && !FlagGet(template->flagId))
                 TrySpawnObjectEventTemplate(template, gSaveBlock1Ptr->location.mapNum, gSaveBlock1Ptr->location.mapGroup, cameraX, cameraY);
+        }
+
+        {
+            u32 i2, live = 0;
+
+            for (i2 = 0; i2 < OBJECT_EVENTS_COUNT; i2++)
+            {
+                if (gObjectEvents[i2].active)
+                    live++;
+            }
+            if (live > gExperimentObjectsPeak)
+                gExperimentObjectsPeak = live;
         }
     }
 }
@@ -1711,9 +1766,10 @@ static void RemoveObjectEventIfOutsideView(struct ObjectEvent *objectEvent)
     // Keep in step with TrySpawnObjectEvents so objects are not removed from
     // a window they would immediately respawn into.
     s16 extraX = GetMapFillExtraX() ? 5 : 0;
+    s16 extraY = ExperimentVerticalObjectSlack();
     s16 left =   gSaveBlock1Ptr->pos.x - 2 - extraX;
     s16 right =  gSaveBlock1Ptr->pos.x + MAP_OFFSET_W + 2 + extraX;
-    s16 top =    gSaveBlock1Ptr->pos.y;
+    s16 top =    gSaveBlock1Ptr->pos.y - extraY;
     s16 bottom = gSaveBlock1Ptr->pos.y + 16;
 
     if (objectEvent->currentCoords.x >= left && objectEvent->currentCoords.x <= right
@@ -7391,7 +7447,11 @@ static void UpdateObjectEventOffscreen(struct ObjectEvent *objectEvent, struct S
     if ((s16)x >= DISPLAY_WIDTH + 16 + gRenderMargin || (s16)x2 < -16 - gRenderMargin)
         objectEvent->offScreen = TRUE;
 
-    if ((s16)y >= DISPLAY_HEIGHT + 16 || (s16)y2 < -16)
+    // Same for the vertical margins the fullscreen240 experiment reveals: the
+    // cull is what makes NPCs blink out a row before they reach the top or
+    // bottom edge of the widened frame.
+    if ((s16)y >= DISPLAY_HEIGHT + 16 + gRenderBottomMargin
+     || (s16)y2 < -16 - gRenderTopMargin)
         objectEvent->offScreen = TRUE;
 }
 
