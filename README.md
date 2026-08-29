@@ -53,6 +53,22 @@ the dual-screen blueprint this follows.
 The dual-screen mod was made with the help of Claude Code and other AI
 coding tools.
 
-This project builds on a decompilation of a copyrighted game. Play it with
-your own legally obtained copy; nothing proprietary ships in this
-repository.
+## Legal
+
+This project is a fan work. It is **not affiliated with, endorsed by, or
+associated with** Nintendo, Creatures Inc. or GAME FREAK inc. Pokémon, Pokémon
+character names, and Pokémon Emerald are trademarks of those companies.
+
+This repository is built on a **decompilation** of Pokémon Emerald, and it
+therefore contains assets derived from that game — graphics, palettes, music as
+MIDI, instrument samples, text and map data — inherited from the upstream
+[pret/pokeemerald](https://github.com/pret/pokeemerald) decompilation. Those
+assets remain the property of their respective owners and are **not** covered by
+this project's licence; see [LICENSE](LICENSE), which grants rights only over
+the port modifications themselves.
+
+**No ROM is distributed here.** The game ROM and the GBA BIOS are excluded from
+version control, and you must supply your own legally obtained copy of Pokémon
+Emerald to build or play. Release builds are gated on a SHA-1 check of that ROM
+and have the corresponding data removed from the executable, so a distributable
+build carries no game data of its own.
