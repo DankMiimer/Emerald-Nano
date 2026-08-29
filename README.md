@@ -1,83 +1,132 @@
-# Pokémon Emerald Dual Screen
+# Emerald Nano
 
-![Showcase](docs/screenshots/showcase.png)
+Pokémon Emerald running **natively** on the [Anbernic RG Nano](https://anbernic.com) —
+no emulator. A software GBA renderer drives the 1.54" 240×240 screen on a
+single-core Allwinner V3s with 64 MB of RAM, at the GBA's authentic 59.7275 Hz.
 
-A dual-screen mod of the [Pokémon Emerald decompilation](https://github.com/pret/pokeemerald) for the AYN Thor and other dual-screen Android devices. The game runs natively, no emulator involved. 
-
-No ROM or copyrighted assets are included. Provide your own rom to get the game up and running.  
-  
-As a result, currently no ROM hacks are supported. This is meant to be a vanilla dual screen experience at the moment, with more support coming soon.
-
-## RG Nano
-
-| 2× zoom — the default | 1:1 — press Y |
+| 2× zoom | 1:1 |
 |---|---|
 | ![The field at 2x zoom, with the dialogue box drawn at 1:1 across the full width](docs/screenshots/shot_rg_nano_fullscreen.png) | ![The same scene at 1:1, showing 24 extra rows of world above and below the GBA viewport](docs/screenshots/shot_rg_nano_1to1.png) |
 
-*Same conversation, both straight off the device's framebuffer at its real
-240×240.*
+*Same conversation in both, straight off the device's framebuffer at its real
+240×240. These are the [experimental full-screen build](experiments/fullscreen240/);
+the default build is described below.*
 
-The same port also runs natively on the **Anbernic RG Nano** — a 1.54" 240×240
-screen driven by a software GBA renderer on a single-core Allwinner V3s with
-64 MB of RAM.
+**No ROM is included.** You supply your own legally obtained copy — see
+[Legal](#legal).
 
-**2×** fills the whole panel with the field magnified 2× (uniform pixels, no
-stretching) while the dialogue box and menus are drawn *unscaled* on top, so
-nothing is clipped by the zoom. Measured at 60 fps with zero dropped redraws.
+## Two layouts
 
-**1:1** shows the game at native scale and reveals 24 rows of extra world above
-and below the GBA's 240×160 viewport — you can see how much further the town
-extends in the right-hand shot. It runs at 48 fps and keeps a 16 px bar top and
-bottom, both for the same reason: the game's own map buffer sets the ceiling.
+**Default — game plus companion panel.** The 240×160 GBA screen sits at the top
+of the panel, with a 240×80 companion strip below it that follows what is
+happening in game: your party with HP and status, the Poké​nav map with your live
+position, your bag, and a mirrored action/move grid during battles. **L** and
+**R** cycle it.
 
-See [`experiments/fullscreen240/`](experiments/fullscreen240/) for how that works
-and what it costs, and [`RG_NANO_PORT_HANDOFF.md`](RG_NANO_PORT_HANDOFF.md) for
-the port as a whole.
+**Experimental — the whole screen is the game.**
+[`experiments/fullscreen240/`](experiments/fullscreen240/) drops the companion
+panel and fills all 240×240 with the field:
 
-## Instructions
+- **2×** magnifies the field to fill the panel — uniform pixels, no stretching —
+  while the dialogue box and menus are drawn *unscaled* on top, so nothing is
+  clipped by the zoom. Measured at **60 fps** with zero dropped redraws.
+- **1:1** shows the game at native scale and reveals 24 rows of extra world above
+  and below the GBA's 240×160 viewport; you can see how much further the town
+  extends in the right-hand shot above. **48 fps**, with a 16 px bar top and
+  bottom.
 
-1. Install the APK from the [releases page](https://github.com/Goldoire/pokeemerald-dualscreen/releases).
-  Android will warn about an unknown developer.
-2. Launch the app and tap "Select ROM" when asked, then pick your
-  Pokémon Emerald (USA/Europe) ROM. It is checked against SHA-1
+Both numbers, and the two hard ceilings behind them, are in that directory's
+README. It is a separate build (`RG_NANO_FULLSCREEN=1`); the default build is
+unaffected.
+
+## Install
+
+There is no prebuilt release yet — build it with the steps below, then:
+
+1. Copy `PokemonEmeraldNano_funkey-s.opk` to **`/mnt/Native games/`** on the
+   device.
+2. Put your Pokémon Emerald (USA/Europe) ROM at
+   **`/mnt/FunKey/.pokemon-emerald-nano/baserom.gba`**. It must be the 16 MiB
+   original, checked against SHA-1
    `f3ae088181bf583e55daf962a92bb46f4f1d07b7`.
-   (You can also drop the ROM at `Android/data/com.pokeemerald.dualscreen/files/baserom.gba`
-   beforehand to skip the picker.)
-3. That's it. The app restores the game data once and boots straight into
-  the game. Future launches skip this step
+3. Launch it from the games menu. If the ROM is missing or wrong, the app says
+   so on screen rather than failing silently.
 
 ## Saves
 
-You can bring an existing save with you. Any ordinary 128 KB GBA flash save, the same file an emulator or a cart dumper writes, n can be put at `Android/data/com.pokeemerald.dualscreen/files/pokeemerald.sav`. 
+`/mnt/FunKey/.pokemon-emerald-nano/pokeemerald.sav` — an ordinary 128 KB GBA
+flash save, the same file an emulator or a cart dumper writes. Drop yours there
+to bring a game across, or copy it out to take one elsewhere. Savestates and
+other formats are not supported.
 
-Copy yours there and it loads on the next launch, or copy it out to transfer your save elsewhere. This doesn't include savestates or other formats.
+## Controls
 
-## Features
+| Button | Does |
+|---|---|
+| D-pad, A, B, START | the GBA buttons |
+| **L** / **R** | cycle the companion panel (automatic → party → map → bag) |
+| **MENU** | exit prompt — confirm with A, cancel with B |
 
-- **Native widescreen!** 16:9 Widescreen for the top screen, without stretching the image
-- **Fast forward:** without speeding up the music, at 2x, 3x, and 4x
-- **Party**: icons, HP and status for all six. Tap a Pokémon for its
-stats, nature, ability, moves and exp.
-- **Gen 4 style battles**: use touch/controls on the bottom screen to select between options and moves.
-- **Battle hints** (off by default): effectiveness carets on each move
-and the foe's weaknesses on its card.
-- **Map**: the Hoenn Pokénav map with your live position and the name of
-where you are.
-- **Bag**: all five pockets with live quantities.
-- **Trainer card**: badges, money, playtime, based on the in-game card
+Emerald barely uses the GBA's shoulder buttons, so L and R drive the panel
+instead. In the experimental full-screen build, **X** toggles the layout and
+**Y** switches between 2× and 1:1.
+
+## Building
+
+Needs the [FunKey SDK](https://github.com/FunKey-Project/FunKey-OS) (2.3.0) and
+a Linux environment — WSL is fine.
+
+```bash
+make -f Makefile_rg_nano
+BASEROM=/path/to/your/baserom.gba DEVELOPMENT_BUILD=0 scripts/package_rg_nano.sh
+```
+
+That produces the OPK in `dist/`. The release build searches your ROM for every
+asset it can identify and **removes that data from the executable**, leaving a
+manifest of where it came from; the app restores it at launch from the ROM you
+supplied. Expect it to take around half an hour. A `DEVELOPMENT_BUILD=1` build
+skips all of that and is much faster, but the resulting binary contains the game
+data — keep those local.
+
+For the full-screen build, see
+[`experiments/fullscreen240/build.sh`](experiments/fullscreen240/build.sh).
+
+[`RG_NANO_PORT_HANDOFF.md`](RG_NANO_PORT_HANDOFF.md) documents the port itself:
+the platform layer, the software PPU, the frame budget, and the bugs found on
+hardware along the way.
+
+## Also runs on Android
+
+![Showcase](docs/screenshots/showcase.png)
+
+This port descends from
+[Goldoire/pokeemerald-dualscreen](https://github.com/Goldoire/pokeemerald-dualscreen),
+a dual-screen build for the AYN Thor and other dual-screen Android devices —
+also native, also no emulator. Install the APK from
+[its releases page](https://github.com/Goldoire/pokeemerald-dualscreen/releases),
+then pick your ROM when asked (or drop it at
+`Android/data/com.pokeemerald.dualscreen/files/baserom.gba` beforehand). Saves
+live alongside it as `pokeemerald.sav`.
+
+That build adds native 16:9 widescreen for the top screen without stretching,
+fast-forward at 2×/3×/4× that leaves the music at normal tempo, Gen 4 style
+battles driven from the touch screen, optional battle hints, and the party, map,
+bag and trainer card views the RG Nano's companion panel is built from.
 
 ## Credits
 
-- [pret/pokeemerald](https://github.com/pret/pokeemerald): the decompilation
-this is built on.
-- [gradenGnostic/pokeemerald-multiplatform](https://github.com/gradenGnostic/pokeemerald-multiplatform):
-the native SDL2 port.
+- [pret/pokeemerald](https://github.com/pret/pokeemerald) — the decompilation
+  all of this is built on.
+- [gradenGnostic/pokeemerald-multiplatform](https://github.com/gradenGnostic/pokeemerald-multiplatform)
+  — the native SDL2 port.
+- [Goldoire/pokeemerald-dualscreen](https://github.com/Goldoire/pokeemerald-dualscreen)
+  — the dual-screen build this RG Nano port descends from, and the source of the
+  companion panel and widescreen renderer.
 - [samyost1/tmc-android](https://github.com/samyost1/tmc-android) and
-[samyost1/zelda3-android](https://github.com/samyost1/zelda3-android):
-the dual-screen blueprint this follows.
+  [samyost1/zelda3-android](https://github.com/samyost1/zelda3-android) — the
+  dual-screen blueprint that one follows.
 
-The dual-screen mod was made with the help of Claude Code and other AI
-coding tools.
+Made with the help of Claude Code and other AI coding tools.
 
 ## Legal
 
