@@ -8,6 +8,32 @@ No ROM or copyrighted assets are included. Provide your own rom to get the game 
   
 As a result, currently no ROM hacks are supported. This is meant to be a vanilla dual screen experience at the moment, with more support coming soon.
 
+## RG Nano
+
+| 2× zoom — the default | 1:1 — press Y |
+|---|---|
+| ![The field at 2x zoom, with the dialogue box drawn at 1:1 across the full width](docs/screenshots/shot_rg_nano_fullscreen.png) | ![The same scene at 1:1, showing 24 extra rows of world above and below the GBA viewport](docs/screenshots/shot_rg_nano_1to1.png) |
+
+*Same conversation, both straight off the device's framebuffer at its real
+240×240.*
+
+The same port also runs natively on the **Anbernic RG Nano** — a 1.54" 240×240
+screen driven by a software GBA renderer on a single-core Allwinner V3s with
+64 MB of RAM.
+
+**2×** fills the whole panel with the field magnified 2× (uniform pixels, no
+stretching) while the dialogue box and menus are drawn *unscaled* on top, so
+nothing is clipped by the zoom. Measured at 60 fps with zero dropped redraws.
+
+**1:1** shows the game at native scale and reveals 24 rows of extra world above
+and below the GBA's 240×160 viewport — you can see how much further the town
+extends in the right-hand shot. It runs at 48 fps and keeps a 16 px bar top and
+bottom, both for the same reason: the game's own map buffer sets the ceiling.
+
+See [`experiments/fullscreen240/`](experiments/fullscreen240/) for how that works
+and what it costs, and [`RG_NANO_PORT_HANDOFF.md`](RG_NANO_PORT_HANDOFF.md) for
+the port as a whole.
+
 ## Instructions
 
 1. Install the APK from the [releases page](https://github.com/Goldoire/pokeemerald-dualscreen/releases).
