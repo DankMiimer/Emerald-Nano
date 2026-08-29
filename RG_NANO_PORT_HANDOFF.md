@@ -1,6 +1,9 @@
 # Pokémon Emerald — RG Nano native port: handoff
 
-Status as of **2026-08-29**. Branch `rg-nano-port`. This picks up from the
+Status as of **2026-08-29**. Branch `main` of `DankMiimer/Emerald-Nano`, which
+is now this port's own repository rather than a branch of the upstream it came
+from (`Goldoire/pokeemerald-dualscreen`, kept as the `upstream` remote and
+tracked by the local `upstream-main` branch). This picks up from the
 ChatGPT/Codex session that wrote the port; that session ran out of budget before
 it ever ran the binary on hardware, so everything below the "What was already
 here" line was found by actually booting it on the device.
