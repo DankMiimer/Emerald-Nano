@@ -54,6 +54,11 @@ static uint16_t sKeys;
 static bool sExitConfirmation;
 static bool sHeldGameFrame;
 static uint16_t sGbaImage[DISPLAY_WIDTH * MAX_RENDER_HEIGHT];
+#if RG_NANO_FULLSCREEN
+// BG0 rendered at 1:1, to be laid over the zoomed world. Full panel height so
+// every piece of field UI lands somewhere in it.
+static uint16_t sUiOverlay[DISPLAY_WIDTH * MAX_RENDER_HEIGHT];
+#endif
 static uint16_t sPanelCache[SECONDARY_PANEL_WIDTH * SECONDARY_PANEL_HEIGHT];
 static uint32_t sPanelRevision = UINT32_MAX;
 static char sDataDirectory[1024] = RG_NANO_DATA_DIR;
@@ -73,6 +78,10 @@ extern int64_t gPpuProfileComposite;
 extern unsigned int gVCountIntrFires;
 extern bool gSecondaryPanelDisabled;
 extern bool gSkipPixelRender;
+#if RG_NANO_FULLSCREEN
+extern bool gUiOverlayActive;
+void DrawUiOverlay(uint16_t *out, int top, int rows);
+#endif
 
 // Frame-time attribution, reported and reset every [Perf] line.
 static int64_t sProfilePpu;
@@ -544,6 +553,40 @@ static void UpdateScaleTables(int srcWidth, int srcHeight, int destHeight)
     sScaleDestHeight = destHeight;
 }
 
+// Does this overlay row contain anything? Bit 15 is set on exactly the pixels
+// BG0 drew.
+static bool UiOverlayRowUsed(const uint16_t *row)
+{
+    int x;
+
+    for (x = 0; x < DISPLAY_WIDTH; x++)
+    {
+        if (row[x] & 0x8000)
+            return true;
+    }
+    return false;
+}
+
+// BG0 is composited in two bands. The dialogue box goes to the bottom of the
+// panel; everything above it stays at the top, where the GBA puts it. This
+// finds the line between them: walk up from the top of the box for as long as
+// rows keep having content, so whatever is resting directly on the box -- the
+// yes/no prompt -- travels down with it and stays attached.
+//
+// Splitting only on an *empty* row is what makes this safe. A script choice
+// list that happens to reach across the line has no empty row to split on, so
+// it is absorbed into the bottom band whole and moved rather than torn in two;
+// and if BG0 is busy all the way to the top, the split lands at 0 and the whole
+// thing degrades to the single-band placement it replaced.
+static int UiOverlaySplit(const uint16_t *overlay, int boxTop)
+{
+    int y = boxTop;
+
+    while (y > 0 && UiOverlayRowUsed(overlay + (y - 1) * DISPLAY_WIDTH))
+        y--;
+    return y;
+}
+
 // BGR555 -> RGB565 by arithmetic. The old 32768-entry lookup table was 64KB
 // against a 32KB L1, so a large share of lookups missed to main memory -- far
 // more expensive than the handful of shifts it replaced.
@@ -555,6 +598,19 @@ static inline uint16_t ConvertPixel(unsigned int color)
 
     // 5-bit green -> 6 bits, replicating the top bit like the old table.
     return (uint16_t)((red << 11) | (((green << 1) | (green >> 4)) << 5) | blue);
+}
+
+// One row of the overlay onto one row of the panel, keeping whatever the world
+// already put there wherever BG0 drew nothing.
+static void BlendUiOverlayRow(const uint16_t *restrict src, uint16_t *restrict dst)
+{
+    int x;
+
+    for (x = 0; x < DISPLAY_WIDTH; x++)
+    {
+        if (src[x] & 0x8000)
+            dst[x] = ConvertPixel(src[x]);
+    }
 }
 #endif
 
@@ -581,10 +637,19 @@ static void DrawComposedFrame(bool runGameVBlank)
         // point where the render geometry can change without tearing a frame
         // between two different heights.
         Fullscreen240_Update();
+        // Read by DrawScanline to leave BG0 out of the world pass, so it must
+        // be settled before DrawFrame and stay put for the whole of it.
+        gUiOverlayActive = Fullscreen240_UiOverlay();
 #endif
         if (!gSkipPixelRender)
             memset(sGbaImage, 0, sizeof(sGbaImage));
         DrawFrame(sGbaImage);
+#if RG_NANO_FULLSCREEN
+        // Immediately after the world pass and before RunVBlank, so the UI is
+        // read from exactly the same frame's VRAM as the world beneath it.
+        if (gUiOverlayActive && !gSkipPixelRender)
+            DrawUiOverlay(sUiOverlay, 0, MAX_RENDER_HEIGHT);
+#endif
         ppuEnd = MonotonicNs();
         REG_VCOUNT = 161;
         // Must be the last write to gBattle_BG0_Y before the V-blank handler
@@ -657,6 +722,36 @@ static void DrawComposedFrame(bool runGameVBlank)
 
                 for (x = 0; x < DISPLAY_WIDTH; x++)
                     dst[x] = ConvertPixel(src[sScaleX[x]]);
+            }
+        }
+
+        // The field UI, unscaled, over the top. Bit 15 is set on exactly the
+        // pixels BG0 drew, so it doubles as the transparency mask and no
+        // separate coverage buffer is needed.
+        if (gUiOverlayActive)
+        {
+            int boxTop = Fullscreen240_UiBoxTop();
+            int boxBottom = Fullscreen240_UiBoxBottom();
+            int split = UiOverlaySplit(sUiOverlay, boxTop);
+            int bottomRows = boxBottom - split;
+            int bottomDest = MAX_RENDER_HEIGHT - bottomRows;
+            int row;
+
+            // Top band, in place: start menu, map name popup, anything else
+            // living in the upper part of BG0.
+            for (row = 0; row < split && row < MAX_RENDER_HEIGHT; row++)
+                BlendUiOverlayRow(sUiOverlay + row * DISPLAY_WIDTH,
+                                  screenPixels + row * pitch);
+
+            // Bottom band, moved down so the box lands flush on the panel edge.
+            for (row = 0; row < bottomRows; row++)
+            {
+                int dest = bottomDest + row;
+
+                if (dest < 0 || dest >= MAX_RENDER_HEIGHT)
+                    continue;
+                BlendUiOverlayRow(sUiOverlay + (split + row) * DISPLAY_WIDTH,
+                                  screenPixels + dest * pitch);
             }
         }
     }

@@ -38,6 +38,10 @@ int gRenderMargin = 0;
 int gRenderHeight = DISPLAY_HEIGHT;
 int gRenderTopMargin = 0;
 int gRenderBottomMargin = 0;
+
+// While set, BG0 is left out of the world pass and drawn separately at 1:1 by
+// DrawUiOverlay. Same lifetime rule as the geometry globals.
+bool gUiOverlayActive;
 #endif
 
 struct scanlineData {
@@ -1013,6 +1017,15 @@ static void DrawScanline(uint16_t *restrict pixels, int vcount)
         // All backgrounds are text mode
         for (bgnum = 3; bgnum >= 0; bgnum--)
         {
+#if RG_NANO_FULLSCREEN
+            // BG0 is the overworld's UI layer, and while the world is zoomed it
+            // is drawn separately at 1:1 (DrawUiOverlay). Rendering it here too
+            // would leave a magnified, side-cropped copy of the dialogue box
+            // showing around the unscaled one. Leaving its layer buffer cleared
+            // is enough: the compositor skips pixels with no alpha bit.
+            if (gUiOverlayActive && bgnum == 0)
+                continue;
+#endif
             if (isbgEnabled(bgnum))
             {
                 uint16_t bghoffs = *(uint16_t *)(REG_ADDR_BG0HOFS + bgnum * 4);
@@ -1256,6 +1269,47 @@ unsigned int gVCountIntrFires;
 // produces no pixels. Used to hold exact 60Hz game and audio timing on frames
 // the CPU cannot also draw in budget.
 bool gSkipPixelRender;
+
+#if RG_NANO_FULLSCREEN
+// Render BG0 on its own, at 1:1 and the full 240px width, into `out`.
+//
+// This is what lets the field UI stay unscaled over a zoomed world. BG0 is the
+// overworld's dedicated UI layer -- sOverworldBgTemplates gives it its own char
+// base and screenblock, away from the three map layers, and the field pins its
+// scroll to 0 -- so splitting the frame along it is a clean seam rather than a
+// hack. Everything the player reads (dialogue box, start menu, choice lists,
+// the map name popup) is on it, and nothing else is.
+//
+// Pixels BG0 does not write are left 0. RenderBGScanline sets bit 15 on the
+// ones it does, so the compositor gets its mask for free.
+void DrawUiOverlay(uint16_t *out, int top, int rows)
+{
+    int savedWidth = gRenderWidth;
+    int savedMargin = gRenderMargin;
+    uint16_t control = REG_BG0CNT;
+    uint16_t hoffs = REG_BG0HOFS;
+    uint16_t voffs = REG_BG0VOFS;
+    int i;
+
+    // RenderBGScanline works in whatever the active render geometry is, which
+    // while zoomed is a cropped 120px window. The overlay wants the whole
+    // uncropped width -- that is the entire point of drawing it separately.
+    // Safe to change here: the game thread is parked for all of
+    // DrawComposedFrame, and both values are restored before it returns.
+    gRenderWidth = DISPLAY_WIDTH;
+    gRenderMargin = 0;
+    for (i = 0; i < rows; i++)
+    {
+        uint16_t *line = out + i * DISPLAY_WIDTH;
+
+        memsetu16(line, 0, DISPLAY_WIDTH);
+        if (isbgEnabled(0))
+            RenderBGScanline(0, control, hoffs, voffs, top + i, line);
+    }
+    gRenderWidth = savedWidth;
+    gRenderMargin = savedMargin;
+}
+#endif
 
 // One rendered row, backdrop first. `line` is a game-space scanline number and
 // may sit outside [0, DISPLAY_HEIGHT) when vertical margins are active; buffer

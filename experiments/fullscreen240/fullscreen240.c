@@ -33,13 +33,9 @@
 #include <string.h>
 
 #include "global.h"
-#include "field_message_box.h"
 #include "main.h"
 #include "overworld.h"
 #include "platform.h"
-#include "menu.h"
-#include "script.h"
-#include "window.h"
 
 #include "fullscreen240.h"
 
@@ -78,6 +74,12 @@ static const int sZoomSteps[] = { 200, 100 };
 // Raising this past 24 brings the strips back into view. That is the whole
 // budget; there is no more slack to spend without making the BG map taller.
 #define DEFAULT_MARGIN 24
+
+// sStandardTextBox_WindowTemplates[0] sits at tilemapTop 15 and is 4 rows tall;
+// WindowFunc_DrawDialogueFrame draws the frame one row around it, so the box
+// occupies tile rows 14..19 -- game y 112..160.
+#define TEXTBOX_TOP_ROW 14
+#define TEXTBOX_ROWS     6
 
 // Diagnostic knob for the popping along the top edge. At 1:1 the 80 extra rows
 // are split evenly, 40 above and 40 below; this moves the split without
@@ -197,27 +199,25 @@ static bool32 IsFieldView(void)
 
 // Zooming crops the sides, and every piece of field UI lives there: the
 // dialogue box is 232px wide and the start menu sits hard against the right
-// edge. Emerald's messages carry their line breaks in the strings, so the box
-// cannot simply be made narrower -- instead the view pulls back to 1:1 while
-// any of it is on screen, where all of it fits, and zooms back in afterwards.
-static bool32 FieldUiOpen(void)
-{
-    if (!IsFieldMessageBoxHidden())                     // dialogue, signposts
-        return TRUE;
-    if (GetStartMenuWindowId() != WINDOW_NONE)          // start menu
-        return TRUE;
-    if (ArePlayerFieldControlsLocked())                 // scripts, and the
-        return TRUE;                                    // start menu's lock
-    return FALSE;
-}
-
-// NOT gMenuCallback. It is set to HandleStartMenuInput when the start menu
-// opens and never cleared when it closes -- the task is destroyed but the
-// pointer keeps its stale value for the rest of the process. Testing it
-// latched the view at 1:1 from the first press of START onwards, with no way
-// back short of restarting the game. Both signals above clear themselves:
-// RemoveStartMenuWindow() resets the window id, and HideStartMenuWindow()
-// calls UnlockPlayerFieldControls().
+// edge. Emerald's messages carry their line breaks inside the strings, so the
+// box cannot be made narrower either.
+//
+// The first answer was to pull the view back to 1:1 whenever any UI was up. It
+// worked, but it moved the world on every single conversation, and it cost
+// frame rate exactly when there was text to read (1:1 is the 48fps mode).
+//
+// The overlay replaces it: BG0 is drawn once more, unscaled, over the zoomed
+// world (DrawUiOverlay in gba_easy_draw.c). Nothing can be clipped because
+// nothing the player reads is subject to the zoom, the world never moves, and
+// it is *cheaper* than zooming out was.
+//
+// It runs whenever the world is zoomed rather than only when UI is detected as
+// open. Gating it would mean maintaining a list of every kind of field UI, and
+// the two worst bugs in this experiment both came from exactly that sort of
+// incomplete condition -- gMenuCallback latching the zoom (it is set when the
+// start menu opens and never cleared when it closes), and the object spawn
+// window missing its vertical case. An always-on overlay has no such list to
+// get wrong, and the frame budget covers it.
 
 // Source region for a given scale, rounded to even so the crop/margin either
 // side of centre is a whole number of pixels.
@@ -250,7 +250,7 @@ void Fullscreen240_Update(void)
         return;
     }
 
-    target = FieldUiOpen() ? SCALE_ONE_TO_ONE : sZoomSteps[sZoomIndex];
+    target = sZoomSteps[sZoomIndex];
     if (sScale < target)
         sScale = (sScale + SCALE_STEP > target) ? target : sScale + SCALE_STEP;
     else if (sScale > target)
@@ -285,6 +285,32 @@ void Fullscreen240_Update(void)
 bool32 Fullscreen240_Active(void)
 {
     return sActive;
+}
+
+// The field UI is drawn unscaled over the world whenever the world is zoomed.
+// At 1:1 there is nothing to correct for, and overlaying would draw BG0 twice.
+bool32 Fullscreen240_UiOverlay(void)
+{
+    return sActive && sScale > SCALE_ONE_TO_ONE;
+}
+
+// Where the dialogue box sits in BG0's own coordinates. The compositor needs
+// both edges because it splits BG0 into two bands: the box (and whatever is
+// resting on top of it) goes to the bottom of the panel, everything above stays
+// at the top where the GBA puts it.
+//
+// Placing the whole plane in one piece was the first attempt. It cannot satisfy
+// both ends at once -- BG0 is a single plane, and the box's position within it
+// is fixed at map load because it has to suit the 1:1 view as well, so pinning
+// the box to the bottom drags the start menu 56px below where it belongs.
+int Fullscreen240_UiBoxTop(void)
+{
+    return TEXTBOX_TOP_ROW * 8 + Fullscreen240_TextBoxShiftRows() * 8;
+}
+
+int Fullscreen240_UiBoxBottom(void)
+{
+    return Fullscreen240_UiBoxTop() + TEXTBOX_ROWS * 8;
 }
 
 // Rows the rendered frame occupies on the 240-row panel. Equal to gRenderHeight

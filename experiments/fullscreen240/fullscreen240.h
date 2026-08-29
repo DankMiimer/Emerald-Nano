@@ -17,6 +17,9 @@ void Fullscreen240_Toggle(void);                // X button
 void Fullscreen240_CycleZoom(void);              // Y button
 bool32 Fullscreen240_Active(void);              // is the widened frame live now
 int Fullscreen240_DestHeight(void);             // rows the frame occupies on the panel
+bool32 Fullscreen240_UiOverlay(void);           // draw BG0 unscaled over the world
+int Fullscreen240_UiBoxTop(void);               // dialogue box edges in BG0 coordinates
+int Fullscreen240_UiBoxBottom(void);
 const char *Fullscreen240_StatusLine(void);     // for the log
 
 // Game side. Tile rows to push the standard dialogue box down by, so it sits on
@@ -29,6 +32,7 @@ int Fullscreen240_TextBoxShiftRows(void);
 #define Fullscreen240_TextBoxShiftRows() 0
 #define Fullscreen240_Active()           FALSE
 #define Fullscreen240_DestHeight()       DISPLAY_HEIGHT
+#define Fullscreen240_UiOverlay()        FALSE
 
 #endif // RG_NANO_FULLSCREEN
 

@@ -10,7 +10,7 @@ at 208 of the 240 rows by the game's own map-buffer maintenance, so it keeps a
 
 | mode | what you see | frame rate |
 |---|---|---|
-| **2× zoom** (default) | 120×120 of game space magnified 2× — uniform pixels, fills the screen | **60 fps**, ~7 ms of headroom |
+| **2× zoom** (default) | 120×120 of game space magnified 2× — uniform pixels, fills the screen, **UI drawn over it at 1:1** | **60 fps**, ~6.8 ms of headroom, zero skipped redraws |
 | **1:1** (Y toggles) | 240×208 of game space — 24 rows of extra world above and below, letterboxed | **48 fps** |
 
 2× is the mode to play in. 1:1 is the "see more world" option, and it is capped
@@ -34,6 +34,7 @@ at 20.6 ms. Everything else here follows from it.
 | **2× (120×120 source)** | 14,400 | 5.1 ms | 6.2 ms | **0.8 %** | **60** |
 | 1:1 at 240 rows (artefacts) | 57,600 | 20.6 ms | 20.5 ms | 29.5 % | 43 |
 | **1:1 at 208 rows (shipped)** | 49,920 | 17.8 ms | **17.7 ms** | **19.8 %** | **48** |
+| **2× + 1:1 UI overlay (shipped)** | 14,400 + BG0 | — | **6.0 ms** | **0 %** | **60** |
 
 The pixel-linear model predicted the 208-row figure to within 0.5 % before it
 was measured, which is the third time it has held. Measured PPU is the
@@ -194,25 +195,71 @@ splits the extra rows unevenly without changing the total, for probing which
 edge an artifact belongs to. Both are config-file only, so testing them needs a
 relaunch but no rebuild.
 
-### Zooming crops the field UI, so the view pulls back
+### The field UI is drawn at 1:1 over the zoomed world
 
-The dialogue box is 232px wide and the start menu sits hard against the right
-edge, so any zoom cuts them off — and the box cannot simply be made narrower,
-because Emerald's messages carry their line breaks inside the strings. Instead
-`FieldUiOpen()` eases the view back to 1:1 (25 percent points per frame, about
-four frames) whenever any of it is on screen, then zooms back in afterwards. At
-1:1 everything fits, and a static dialogue does not care that 1:1 is the 43 fps
-mode. Confirmed on hardware: "the transition and animation when at 2× when
-talking to an NPC and walking into buildings to 1× works perfectly."
+Zooming crops the sides, and every piece of field UI lives there: the dialogue
+box is 232px wide and the start menu sits hard against the right edge. The box
+cannot be made narrower either — Emerald's messages carry their line breaks
+inside the strings.
 
-**Do not gate this on `gMenuCallback`.** It is set to `HandleStartMenuInput`
-when the start menu opens and **never cleared** when it closes — the task is
-destroyed but the pointer keeps its stale value for the rest of the process.
-Testing it latched the view at 1:1 from the first press of START onwards, with
-no way back short of restarting the game. `FieldUiOpen()` uses
-`GetStartMenuWindowId()` and `ArePlayerFieldControlsLocked()` instead, both of
-which the game clears itself (`RemoveStartMenuWindow`,
-`UnlockPlayerFieldControls`).
+The first answer was to ease the view back to 1:1 whenever any UI was on screen.
+It worked, and was confirmed pleasant on hardware, but it moved the world on
+every single conversation and it cost frame rate exactly when there was text to
+read, because 1:1 is the 48 fps mode.
+
+**The overlay replaces it, and the game hands you the seam for free.** BG0 is the
+overworld's dedicated UI layer: `sOverworldBgTemplates` gives it its own char
+base and screenblock, away from the three map layers, and the field pins its
+scroll to 0. Everything the player reads is on it, and nothing else is. So
+`DrawUiOverlay()` renders BG0 alone, at 1:1 and full 240px width, into its own
+buffer, and the compositor lays it over the zoomed world. Nothing can be
+clipped, because nothing the player reads is subject to the zoom.
+
+Three things make it work:
+
+- **BG0 is suppressed from the world pass** while the overlay is live
+  (`gUiOverlayActive`). Not optional: without it you get a magnified,
+  side-cropped copy of the box showing around the unscaled one. Leaving BG0's
+  layer buffer cleared is enough, since the compositor skips pixels with no
+  alpha bit — and it hands back most of the overlay's cost.
+- **Transparency is free.** `RenderBGScanline` sets bit 15 on exactly the pixels
+  it writes, so that doubles as the mask; no coverage buffer is needed.
+- **It runs whenever the world is zoomed**, not only when UI is detected as
+  open. Gating it would mean maintaining a list of every kind of field UI, and
+  the two worst bugs in this experiment both came from that shape of incomplete
+  condition. An always-on overlay has no list to get wrong.
+
+**It is also cheaper than what it replaced.** Measured: 6.0 ms PPU, 9.95 ms
+whole frame, **zero** skipped redraws per 600 — conversations went from 48 fps
+to 60. The cost was predicted at +2.8 ms and came in at +0.6 ms; see
+[the blank-tile skip](#the-blank-tile-skip-finally-paid-off).
+
+#### Two bands, split on an empty row
+
+BG0 is one plane, and the box's position inside it is fixed at map load because
+it has to suit the 1:1 view as well. Placing the plane in one piece therefore
+cannot satisfy both ends: pinning the box flush to the bottom drags the start
+menu and the map-name popup 56px below where the GBA puts them.
+
+So the compositor splits BG0 in two. Everything from the box downward goes to
+the bottom of the panel; everything above stays where it is. `UiOverlaySplit()`
+finds the line by walking up from the top of the box for as long as rows keep
+having content, which carries the yes/no prompt down with the box and keeps the
+two touching.
+
+Splitting only on an **empty** row is what makes it safe. A script choice list
+that reaches across the line has no empty row to split on, so it is absorbed
+into the bottom band whole and *moved* rather than torn in two; and if BG0 is
+busy all the way to the top, the split lands at 0 and the whole thing degrades
+to the single-band placement it replaced.
+
+**Do not gate any of this on `gMenuCallback`.** It is set to
+`HandleStartMenuInput` when the start menu opens and **never cleared** when it
+closes — the task is destroyed but the pointer keeps its stale value for the
+rest of the process. An earlier version of the zoom-out tested it and latched
+the view at 1:1 from the first press of START onwards, with no way back short of
+restarting the game. `GetStartMenuWindowId()` and
+`ArePlayerFieldControlsLocked()` both clear themselves.
 
 ### Scope: the field only
 
@@ -259,7 +306,16 @@ fetch, per the handoff's own benchmark). You cannot skip the fetch, because
 reading the tile row is the only way to learn it is blank.
 
 The change was kept anyway — it is free and byte-identical — but nobody should
-expect frame rate from it. Getting 1:1 to 60 means restructuring
+expect frame rate from it *here*.
+
+##### The blank-tile skip finally paid off
+
+It did earn its keep, just not where it was aimed. The UI overlay costs a
+predicted 3.3 ms and a measured ~0.9 ms, because the estimate priced BG0 at a
+*dense* layer's rate and BG0 in the field is almost entirely blank tiles —
+exactly the case the skip makes nearly free. The optimization that bought
+nothing for the world render is what makes drawing the UI a second time
+affordable. Getting 1:1 to 60 means restructuring
 `RenderBGScanline` so tilemap and tile fetches are sequential rather than
 scattered. That is a project, and it was consciously not taken on here.
 
@@ -342,8 +398,8 @@ above, worth almost nothing.)
 |---|---|
 | `Makefile_rg_nano` | `RG_NANO_FULLSCREEN=1` adds the define and this directory's source |
 | `include/platform.h` | `gRenderHeight` / `gRenderTopMargin` / `gRenderBottomMargin`, and no-op macros when off |
-| `src/platform/gba_easy_draw.c` | margin scanline passes in `DrawFrame`, signed scanline numbers, crop clamp, vertical window extension, sprite y-wrap, blank-tile skip |
-| `src/platform/rg_nano.c` | taller frame buffer, per-frame geometry update, nearest-neighbour scale onto the panel, exit prompt over the widened frame, X/Y keys |
+| `src/platform/gba_easy_draw.c` | margin scanline passes in `DrawFrame`, signed scanline numbers, crop clamp, vertical window extension, sprite y-wrap, blank-tile skip, `DrawUiOverlay` + BG0 suppression |
+| `src/platform/rg_nano.c` | taller frame buffer, per-frame geometry update, nearest-neighbour scale onto the panel, two-band UI overlay composite, exit prompt over the widened frame, X/Y keys |
 | `src/event_object_movement.c` | vertical NPC cull and spawn window follow the margins |
 | `src/menu.c`, `include/menu.h`, `src/overworld.c` | field dialogue box + yes/no box move down |
 
@@ -366,7 +422,14 @@ above, worth almost nothing.)
    cover the margins.
 5. **Menus positioned relative to the text box** (multichoice lists in
    `script_menu.c`) have not been moved. They float where they always did,
-   which at 1:1 means above the relocated box.
+   which at 1:1 means above the relocated box. Under the 2× overlay a list that
+   reaches down to the box is carried into the bottom band and displaced
+   downward with it — intact, but not where the GBA would put it.
+6. **The overlay ignores window masks and `BLDCNT`.** If anything ever
+   alpha-blends BG0 against the world, or masks it with WIN0 (the cave flash
+   circle is the candidate), the overlay will not reproduce that. Palette fades
+   are fine: those act on palette RAM, so the overlay darkens with everything
+   else.
 6. **`audio_over` climbed steadily** (~1 per frame) through one long 1:1
    session, while `audio_under` stayed frozen. It was zero in later sessions and
    nothing was audible, so it was not chased — but the handoff already lists a

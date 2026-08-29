@@ -507,8 +507,18 @@ the GBA viewport — the vertical twin of the existing `gRenderWidth` /
 
 | mode | source | fps |
 |---|---|---|
-| 2x zoom (default) | 120x120 magnified 2x | **60**, same 0.8% skip rate as stock |
+| 2x zoom (default) | 120x120 magnified 2x, UI drawn over it at 1:1 | **60**, zero skipped redraws |
 | 1:1 (Y toggles) | 240x208, letterboxed 16px | 48 |
+
+**The field UI is drawn separately, at 1:1, over the zoomed world.** BG0 is the
+overworld's dedicated UI layer — its own char base and screenblock, scroll
+pinned to 0, and everything the player reads is on it — so `DrawUiOverlay()`
+renders it alone at full width and the compositor lays it on top. Nothing can be
+clipped by the zoom, and the world no longer lurches back to 1:1 every time
+someone speaks. BG0 must be *suppressed* from the world pass while this is live
+(`gUiOverlayActive`), or a magnified copy of the box shows around the unscaled
+one. It is composited in two bands split on an empty row, so the dialogue box
+sits flush at the bottom while the map-name popup stays at the top.
 
 **Two hard caps, both measured, both worth not rediscovering:**
 
@@ -539,7 +549,9 @@ the GBA viewport — the vertical twin of the existing `gRenderWidth` /
   not the arithmetic after them, and you cannot skip a fetch you need in order to
   learn the row is blank. The change was kept — it is byte-identical and free —
   but it is **unguarded**, so it is in the stock build too. It is the only part
-  of the experiment that is.
+  of the experiment that is. (It did eventually pay off, in the UI overlay: BG0
+  there is almost all blank tiles, which is why the overlay costs a measured
+  ~0.9 ms against a predicted 3.3.)
 - *1.25x and 1.5x zoom.* Both hit 60fps comfortably, both were cut: they are
   non-integer scales, so they double some pixels and not others, and the owner's
   verdict on this panel was that they look bad. 2x is the only magnification
